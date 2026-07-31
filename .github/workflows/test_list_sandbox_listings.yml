@@ -1,0 +1,28 @@
+name: Test List Sandbox Listings
+
+on:
+  workflow_dispatch:
+
+jobs:
+  list-listings:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install requests
+
+      - name: List Sandbox Listings
+        env:
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+          ONBUY_API_TEST_SKUS: ${{ vars.ONBUY_API_TEST_SKUS }}
+        run: python test_list_sandbox_listings.py

@@ -1,0 +1,35 @@
+name: Remove Confirmed Brand-Rejected SKUs
+
+on:
+  workflow_dispatch:
+    inputs:
+      skus:
+        description: "Comma-separated SKUs to remove (Sheet + Supabase only, no OnBuy changes). Defaults to the SKU confirmed on 2026-07-06."
+        required: false
+        default: ""
+
+jobs:
+  remove-brand-rejected-skus:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Remove confirmed brand-rejected SKUs
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          BRAND_REJECTED_SKUS_TO_REMOVE: ${{ github.event.inputs.skus }}
+        run: python remove_brand_rejected_skus.py

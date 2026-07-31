@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "weavends-theme-dev",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "shopify",
+        "theme",
+        "dev",
+        "--store",
+        "nzcgzd-dj.myshopify.com",
+        "--path",
+        "D:\\Dev-Projects\\weavends-theme"
+      ],
+      "port": 9292
+    }
+  ]
+}

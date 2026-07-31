@@ -1,0 +1,33 @@
+name: Test Check Queue Status
+
+on:
+  workflow_dispatch:
+    inputs:
+      queue_ids:
+        description: 'Optional: comma-separated "sku:queue_id" pairs to check instead of the default 5'
+        required: false
+        default: ""
+
+jobs:
+  check-queue-status:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install requests
+
+      - name: Check Queue Status
+        env:
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+          ONBUY_QUEUE_IDS_TO_CHECK: ${{ github.event.inputs.queue_ids }}
+        run: python test_check_queue_status.py

@@ -1,0 +1,99 @@
+name: YRA Full-Auto Sync
+
+on:
+  schedule:
+    - cron: "31 1-23/2 * * *"   # every 2h on an unpopular minute - GitHub drops busy-minute crons under load (observed 5-11h gaps); denser asks + odd minutes net a steadier real cadence, and the per-run batch (budget/RUNS_PER_DAY) keeps daily spend identical
+  workflow_dispatch:
+    inputs:
+      refresh_all:
+        description: "Set to yes to ALSO re-fetch already-filled rows. Default: manual runs only fill NEW rows"
+        required: false
+        default: ""
+
+# Never let two OnBuy-touching runs execute at the same time - they share the
+# same 240-calls/hour API quota AND a fresh token from one run supersedes the
+# other's mid-flight (confirmed 2026-07-06: a manual run overlapping the
+# scheduled one produced mass "rate limited" + 401 "badToken" failures, and
+# both runs create-raced the same brand-new SKUs). Same group as the hourly
+# backfill workflow so that queues behind a sync run too instead of
+# overlapping it.
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Job-level so the "if:" condition below can read it via the env context -
+      # the secrets context is not a recognized named-value inside if: expressions.
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run script
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+          # Off until explicitly turned on - see the comment block in generate_xml.py.
+          ONBUY_API_PUSH_ENABLED: ${{ vars.ONBUY_API_PUSH_ENABLED }}
+          ONBUY_API_TEST_SKUS: ${{ vars.ONBUY_API_TEST_SKUS }}
+          # Set ONBUY_USE_SANDBOX=true (as a repo Variable) to run the whole
+          # pipeline against OnBuy's sandbox account before ever touching
+          # production - see README.md for the recommended rollout order.
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          # Batch size scales automatically from these two - see the comment
+          # in generate_xml.py. RUNS_PER_DAY must match the cron above.
+          # 50/50 split of the shared YRA eBay keyset with the semi line
+          # (yra-global-onbuy-sync drops to 2000 at this repo's go-live).
+          EBAY_DAILY_CALL_BUDGET: ${{ vars.EBAY_DAILY_CALL_BUDGET || '2000' }}
+          RUNS_PER_DAY: ${{ vars.RUNS_PER_DAY || '12' }}
+          MAX_PRODUCTS_PER_RUN: ${{ vars.MAX_PRODUCTS_PER_RUN }}
+          REFRESH_ALL: ${{ inputs.refresh_all }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_FEED_BUCKET: ${{ vars.SUPABASE_FEED_BUCKET }}
+          # Email works with Resend (SMTP_HOST=smtp.resend.com, SMTP_USER=resend,
+          # SMTP_APP_PASSWORD=<API key>, ALERT_EMAIL_FROM=<verified sender>) or
+          # Gmail (just SMTP_USER + app password, no Variables needed).
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          ALERT_EMAIL_FROM: ${{ vars.ALERT_EMAIL_FROM }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+        run: python generate_xml.py
+
+      # feed.xml is uploaded to Supabase Storage from inside generate_xml.py
+      # (see storage.py) once SUPABASE_URL/SUPABASE_SERVICE_KEY secrets exist -
+      # that replaces the old "commit feed.xml every 3 hours forever" step,
+      # which produced 397 of this repo's ~550 commits and grew it unbounded.
+      # Until those two secrets are added, this fallback step keeps the old
+      # git-commit behavior running so the hosted feed URL never goes stale -
+      # remove this step once Supabase Storage is confirmed working.
+      - name: Commit and push XML (fallback - only runs until Supabase secrets are set)
+        if: ${{ env.SUPABASE_URL == '' }}
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add feed.xml
+          git commit -m "Auto update feed" || echo "No changes"
+          git push

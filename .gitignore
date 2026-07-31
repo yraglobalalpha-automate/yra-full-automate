@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+_old_prototype_backup/
+
+# Operational docs stay on the office PC only - never in the public repo
+README.md
+CLAUDE.md
+*.pdf
+*.docx

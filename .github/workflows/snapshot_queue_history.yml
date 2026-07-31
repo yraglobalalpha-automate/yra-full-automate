@@ -1,0 +1,54 @@
+name: Snapshot OnBuy Queue History (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: "Optional: pages of 50 to capture (default 200 = up to 10,000 entries)"
+        required: false
+        default: ""
+
+# Shares the OnBuy quota/token with the sync + backfill workflows - queue
+# behind them rather than overlapping (see run.yml for why).
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Snapshot queue history
+        env:
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+          QUEUE_SNAPSHOT_MAX_PAGES: ${{ github.event.inputs.max_pages }}
+        run: python snapshot_queue_history.py
+
+      - name: Upload snapshot as downloadable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: onbuy-queue-snapshot
+          path: |
+            queue_history_snapshot.csv
+            duplicates_report.csv
+          if-no-files-found: warn

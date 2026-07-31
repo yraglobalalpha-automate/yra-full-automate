@@ -1,0 +1,58 @@
+name: Attach Missing Listings (one-off remediation)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report only, change nothing (yes/no)"
+        default: "yes"
+      limit_skus:
+        description: "Comma-separated SKUs to restrict to (empty = all)"
+        default: ""
+      max_listings:
+        description: "Hard cap on listings attached this run"
+        default: "1000"
+      skip_probe:
+        description: "Skip the listings scan (only with limit_skus)"
+        default: "no"
+
+# Same group as every OnBuy-touching workflow: a new token supersedes the one
+# a running sync holds (mass 401s, 2026-07-06) - queue, never overlap.
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Attach missing listings
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+          LIMIT_SKUS: ${{ inputs.limit_skus }}
+          MAX_LISTINGS: ${{ inputs.max_listings }}
+          SKIP_PROBE: ${{ inputs.skip_probe == 'yes' && '1' || '' }}
+        run: python attach_missing_listings.py
