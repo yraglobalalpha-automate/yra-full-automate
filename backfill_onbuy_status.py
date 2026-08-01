@@ -120,10 +120,16 @@ for sku, entry in found.items():
     else:
         opc = None
         product_url = None
-        sync_status = f"Failed: {entry.get('error_message', 'unknown error')}"
+        sync_status = f"Failed: {entry.get('error_message') or 'rejected with no reason given by OnBuy'}"
         listing_active = "FALSE"
 
-    print(f"{sku}: status={status}, opc={opc}" + (f", reason={entry.get('error_message', 'unknown error')}" if status != "success" else ""))
+    # "pending" is NOT an error - it just means OnBuy hasn't processed the
+    # queue entry yet (user misread the old filler text as failures).
+    if status == "pending":
+        print(f"{sku}: still in OnBuy's approval queue (no outcome yet)")
+    else:
+        print(f"{sku}: status={status}, opc={opc}"
+              + (f", reason={entry.get('error_message') or 'no reason given'}" if status != "success" else ""))
 
     if opc and "OPC" in col_map:
         sheet_updates.append({"range": f"{col_letter(col_map['OPC'])}{row_index}", "values": [[opc]]})
