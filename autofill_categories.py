@@ -27,14 +27,24 @@ _STOP = {"the", "a", "an", "and", "or", "for", "of", "with", "in", "on", "to", "
          "new", "set", "pack", "pcs", "uk", "x", "s", "m", "l", "xl", "mm", "cm", "b"}
 
 
+def _stem(w):
+    # light plural fold so "TV" meets "TVs" and "Fryer" meets "Fryers"
+    if len(w) > 3 and w.endswith("es"):
+        return w[:-2]
+    if len(w) > 2 and w.endswith("s"):
+        return w[:-1]
+    return w
+
+
 def toks(text):
-    return {w for w in re.findall(r"[a-z0-9]+", str(text or "").lower())
+    return {_stem(w) for w in re.findall(r"[a-z0-9]+", str(text or "").lower())
             if len(w) > 1 and w not in _STOP and not w.isdigit()}
 
 
 def main():
     with open("onbuy_categories_only.csv", newline="", encoding="utf-8-sig") as f:
-        paths = [row[0].strip() for row in csv.reader(f) if row and row[0].strip()]
+        paths = [r["OnBuy Category Path"].strip() for r in csv.DictReader(f)
+                 if (r.get("OnBuy Category Path") or "").strip()]
     cats = []
     for path in paths:
         segs = [s.strip() for s in path.split(">")]
