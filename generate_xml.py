@@ -772,6 +772,7 @@ def main():
     onbuy_updated = 0
     onbuy_failed = 0
     onbuy_removed = 0
+    onbuy_brand_blocked = 0  # brand owned by another seller - flagged, kept (2026-08-03)
     onbuy_deferred = 0  # created earlier, listing not yet updatable on OnBuy's side
     onbuy_postponed = 0  # transient OnBuy/transport trouble - status left untouched, retried next run
     onbuy_halt_reason = None  # set when pushing must stop for the rest of the run (rate limit / dead token)
@@ -939,12 +940,32 @@ def main():
             # "mark it Unbranded and relist" policy): remove the row entirely
             # instead of relisting it as Unbranded.
             if "supplied brand is owned by another seller" in last_sync_status:
-                rows_to_delete.append(i)
-                removed_skus.append(sku)
-                onbuy_removed += 1
+                # Policy changed 2026-08-03 (user): FLAG, never delete. The
+                # original delete-the-row rule was written for GTV's rare
+                # one-off rejections; at YRA's volume it silently destroyed
+                # 124+ rows in a day along with every record of WHICH brands
+                # bounced. The row now stays, turns amber, and stops being
+                # pushed - the team decides to re-source or re-brand.
+                onbuy_brand_blocked += 1
+                brand_alert = (f"BRAND BLOCKED - OnBuy says the brand '{brand}' is owned by "
+                               "another seller, so this product cannot be listed under it. "
+                               "Replace the link with a different product, or correct the Brand cell "
+                               "- the row retries automatically on the next run.")
+                # Full-auto sheets have no Change Alert column - Sync Status
+                # is where a human looks, so the instruction goes there.
+                all_sheet_updates.append(
+                    {"range": f"{col_letter(col_map['Sync Status'])}{i}", "values": [[brand_alert]]})
+                if "Change Alert" in col_map:
+                    all_sheet_updates.append(
+                        {"range": f"{col_letter(col_map['Change Alert'])}{i}", "values": [[brand_alert]]})
+                if "Last Checked Time" in col_map:
+                    all_sheet_updates.append(
+                        {"range": f"{col_letter(col_map['Last Checked Time'])}{i}", "values": [[now_str]]})
+                highlight_requests.append(
+                    row_highlight_request(sheet.id, i, num_cols, False))
                 logger.info(
-                    "Row %d (SKU %s): removing - OnBuy rejected the brand as owned "
-                    "by another seller; not relisting as Unbranded", i, sku,
+                    "Row %d (SKU %s): BRAND BLOCKED (%s) - flagged, not deleted, not pushed",
+                    i, sku, brand,
                 )
                 continue
 
@@ -1311,8 +1332,8 @@ def main():
     logger.info("DONE")
     logger.info("Updated rows: %d", updated_count)
     logger.info("OnBuy: %d created, %d updated, %d deferred (awaiting go-live), %d postponed (transient), "
-                 "%d failed, %d removed (brand rejected)",
-                 onbuy_created, onbuy_updated, onbuy_deferred, onbuy_postponed, onbuy_failed, onbuy_removed)
+                 "%d failed, %d removed (brand rejected), %d brand-blocked (flagged)",
+                 onbuy_created, onbuy_updated, onbuy_deferred, onbuy_postponed, onbuy_failed, onbuy_removed, onbuy_brand_blocked)
     if onbuy_halt_reason:
         logger.warning("OnBuy pushes were halted early this run: %s", onbuy_halt_reason)
     logger.info("Feed products: %d, skipped: %d", feed_count, skipped_feed)
