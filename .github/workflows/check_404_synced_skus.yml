@@ -12,6 +12,12 @@ on:
         required: false
         default: ""
 
+# Shares the OnBuy quota/token with the sync + backfill workflows - queue
+# behind them rather than overlapping (see run.yml for why).
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
 jobs:
   check-404-synced-skus:
     runs-on: ubuntu-latest
