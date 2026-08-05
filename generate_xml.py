@@ -615,10 +615,13 @@ def main():
     # never touched, so existing catalog categories are unaffected.
     category_tokens = {}
     category_leaf_tokens = {}
+    category_leaf_phrase = {}  # path -> ordered stemmed words of the leaf name
     category_guard = {}  # path -> required word set (None = unguarded)
     for _path in onbuy_categories:
         category_tokens[_path] = category_match_tokens(_path)
         category_leaf_tokens[_path] = category_match_tokens(_path.split(">")[-1])
+        category_leaf_phrase[_path] = tuple(
+            _stem(w) for w in re.findall(r"\w+", _path.split(">")[-1].lower()))
         _low = _path.strip().lower()
         category_guard[_path] = next(
             (req for prefix, req in _GUARDED_SUBTREES if _low.startswith(prefix)), None)
@@ -710,6 +713,46 @@ def main():
         # instead of submitting a wrong or null category to OnBuy.
         if best_match and best_score >= 9 and best_has_title_hit:
             return best_match
+
+        # ---- Leaf-named-in-title fallback (2026-08-05, ported from the
+        # GTV store with its phrase-containment tightening) ----
+        # Only reached when the scorer above REFUSED, so behaviour changes
+        # solely for rows that were failing anyway. Diagnosed there:
+        # listings with no eBay Type whose descriptions drowned the scorer
+        # in generic boilerplate - "Model Train Replacement Parts" (hits:
+        # part, replacement, model, accessory) outscored every real audio
+        # leaf for a pair of earbuds, and that junk winner had no title
+        # hit, so the refusal fired even though the title said "Tablet"/
+        # "Speaker" outright.
+        #
+        # The leaf's visible name must appear as a CONTIGUOUS PHRASE in the
+        # title (stemmed, in order), not merely as scattered word tokens.
+        # The first token-subset version matched an "Opsite Post-Op
+        # Dressing ... Box of 20" (a medical wound dressing) to Garden
+        # Decor > Post Boxes on its first live firing - "post" from
+        # Post-Op plus "box" from Box of 20, words in unrelated roles. A
+        # phrase can't be assembled from scattered words, so that class of
+        # error is structurally impossible here. Longest phrase wins
+        # ("Tablet Cases" beats "Tablets" for a case listing); a tie at the
+        # top refuses; guarded subtrees keep their guard.
+        title_seq = [_stem(w) for w in re.findall(r"\w+", str(title).lower())]
+        covered = []
+        for category_path in onbuy_categories:
+            required = category_guard[category_path]
+            if required and not (all_words & required):
+                continue
+            phrase = category_leaf_phrase[category_path]
+            n = len(phrase)
+            if not n or n > len(title_seq):
+                continue
+            if any(tuple(title_seq[i:i + n]) == phrase
+                   for i in range(len(title_seq) - n + 1)):
+                covered.append((n, -len(category_path), category_path))
+        if covered:
+            covered.sort(reverse=True)
+            if len(covered) == 1 or covered[0][0] > covered[1][0]:
+                logger.info("Category matched via leaf-in-title -> %s", covered[0][2])
+                return covered[0][2]
 
         return current_category
 
