@@ -42,7 +42,10 @@ if "Sync Status" not in col_map:
     print("Sheet has no 'Sync Status' column - nothing to check.")
     raise SystemExit(0)
 
+POISONED_TEXT = "Failed: rejected with no reason given by OnBuy"
+
 pending = {}  # sku -> sheet row index
+poisoned = set()  # rows carrying the false Failed text (see below)
 for idx, row in enumerate(data):
     sku = str(row.get("SKU") or "").strip()
     status = str(row.get("Sync Status") or "").strip()
@@ -53,11 +56,21 @@ for idx, row in enumerate(data):
     # those must be checked too, or a submission that actually FAILED in the
     # queue would sit in "Awaiting" forever, never learning it needs the
     # re-create that a "Failed" status would trigger.
+    #
+    # Rows carrying POISONED_TEXT are re-checked as a REPAIR (2026-08-06):
+    # an earlier version of this script wrote that exact text over every
+    # still-queued row each hour (the pending-vs-failed split only guarded
+    # the print, not the write) - 1,396 rows on the OpenMaal store, while
+    # the queue actually held 1,104 successes. Re-checking them against
+    # the queue rewrites the truth: success -> Synced + OPC, real failure
+    # -> Failed with OnBuy's reason, still queued -> Pending Approval.
     needs_check = status == "Pending Approval" or (
         status.startswith("Awaiting OnBuy go-live") and opc in ("", "PENDING")
-    )
+    ) or status == POISONED_TEXT
     if sku and needs_check:
         pending[sku] = idx + 2
+        if status == POISONED_TEXT:
+            poisoned.add(sku)
 
 if not pending:
     print("No rows needing a queue-status check found - nothing to do.")
@@ -108,6 +121,30 @@ for sku, entry in found.items():
     row_index = pending[sku]
     status = entry.get("status")
 
+    # "pending" (or any unrecognised status) is NOT an outcome, and must
+    # write NOTHING. The previous version special-cased pending only in the
+    # PRINT below - the write still went through the failure branch,
+    # stamping "Failed: rejected with no reason given by OnBuy" onto every
+    # still-queued row each hour (1,396 rows on the OpenMaal store by
+    # 2026-08-06). That false Failed status then reopened generate_xml's
+    # create fallback, so syncs re-submitted those products run after run
+    # (OnBuy deduplicated by uid and returned the same OPC - no duplicate
+    # products, but endless create churn and a sheet full of phantom
+    # failures). The only pending-row write allowed is the REPAIR:
+    # restoring "Pending Approval" over the poisoned text.
+    if status not in ("success", "failed"):
+        if sku in poisoned:
+            sheet_updates.append({"range": f"{col_letter(col_map['Sync Status'])}{row_index}", "values": [["Pending Approval"]]})
+            existing = existing_rows.get(sku)
+            if existing is not None:
+                supabase_row = dict(existing)
+                supabase_row["Sync Status"] = "Pending Approval"
+                supabase_rows.append(supabase_row)
+            print(f"{sku}: still in OnBuy's approval queue - restored 'Pending Approval' over the poisoned Failed text")
+        else:
+            print(f"{sku}: still in OnBuy's approval queue (no outcome yet)")
+        continue
+
     if status == "success":
         opc = entry.get("opc", "")
         # OnBuy's queue history is the only place this ever appears - not in
@@ -117,19 +154,14 @@ for sku, entry in found.items():
         product_url = entry.get("product_url", "")
         sync_status = "Synced"
         listing_active = "TRUE"
-    else:
+    else:  # status == "failed" - a real outcome OnBuy reported
         opc = None
         product_url = None
         sync_status = f"Failed: {entry.get('error_message') or 'rejected with no reason given by OnBuy'}"
         listing_active = "FALSE"
 
-    # "pending" is NOT an error - it just means OnBuy hasn't processed the
-    # queue entry yet (user misread the old filler text as failures).
-    if status == "pending":
-        print(f"{sku}: still in OnBuy's approval queue (no outcome yet)")
-    else:
-        print(f"{sku}: status={status}, opc={opc}"
-              + (f", reason={entry.get('error_message') or 'no reason given'}" if status != "success" else ""))
+    print(f"{sku}: status={status}, opc={opc}"
+          + (f", reason={entry.get('error_message') or 'no reason given'}" if status != "success" else ""))
 
     if opc and "OPC" in col_map:
         sheet_updates.append({"range": f"{col_letter(col_map['OPC'])}{row_index}", "values": [[opc]]})
