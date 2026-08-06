@@ -1182,7 +1182,15 @@ def main():
                 # (AuthError subclasses PermanentError, so it must be listed
                 # here, before the PermanentError handler below.)
                 onbuy_postponed += 1
-                run_had_errors = True
+                # Postponed pushes are SELF-HEALING by design (status
+                # untouched, front-of-queue retry next run), so a scattered
+                # network blip or a rate-limit halt doesn't red the run -
+                # hitting the 240/hr cap is the cap doing its job, seen
+                # whenever a manual run shares an hour with a scheduled one
+                # (2026-08-06). A token that can't refresh IS a real fault:
+                # nothing will push until someone fixes credentials.
+                if isinstance(exc, AuthError):
+                    run_had_errors = True
                 logger.warning("OnBuy push postponed for SKU %s: %s", sku, exc)
                 if isinstance(exc, (RateLimitError, AuthError)):
                     # The hourly quota won't come back mid-run, and a token
