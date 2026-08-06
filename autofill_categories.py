@@ -84,6 +84,10 @@ def main():
             out = chr(65 + rem) + out
         return out
 
+    logger.info("sheet rows=%d, headers=%r", len(data), headers)
+    if data:
+        logger.info("first row SKU cell=%r, last row SKU cell=%r",
+                    data[0].get("SKU"), data[-1].get("SKU"))
     updates, applied = [], []
     for idx, row in enumerate(data, start=2):
         sku = str(row.get("SKU") or "").strip()
