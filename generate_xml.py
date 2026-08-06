@@ -864,6 +864,7 @@ def main():
     onbuy_deferred = 0  # created earlier, listing not yet updatable on OnBuy's side
     onbuy_postponed = 0  # transient OnBuy/transport trouble - status left untouched, retried next run
     onbuy_skipped_dead = 0  # eBay listing gone + never created on OnBuy - nothing to create (2026-08-06)
+    onbuy_needs_category = 0  # refusals awaiting a Category cell - a worklist, not failures (2026-08-06)
     onbuy_halt_reason = None  # set when pushing must stop for the rest of the run (rate limit / dead token)
     onbuy_pushes_this_run = 0
     rows_to_delete = []  # Sheet row numbers to remove entirely - see the
@@ -1210,6 +1211,20 @@ def main():
                         "updatable yet - deferring, not re-creating",
                         i, sku, opc_on_record or "pending",
                     )
+                elif "no matching OnBuy category" in str(exc):
+                    # A product waiting for its Category cell is a WORKLIST
+                    # item, not a system failure (2026-08-06): with a growing
+                    # catalog every run carries a few brand-new no-Type
+                    # products, so exiting 1 for them kept the workflow
+                    # permanently red - which buried the failures that
+                    # matter. The status keeps the exact "Failed: no
+                    # matching OnBuy category" wording (the create-fallback
+                    # and autofill's gate both key on it) and the row
+                    # retries the moment a category lands; the run itself
+                    # stays green.
+                    onbuy_needs_category += 1
+                    sync_status = f"Failed: {str(exc)[:300]}"
+                    logger.warning("SKU %s needs a category before it can list: %s", sku, exc)
                 else:
                     onbuy_failed += 1
                     run_had_errors = True
@@ -1449,9 +1464,10 @@ def main():
     logger.info("DONE")
     logger.info("Updated rows: %d", updated_count)
     logger.info("OnBuy: %d created, %d updated, %d deferred (awaiting go-live), %d postponed (transient), "
-                 "%d failed, %d removed (brand rejected), %d brand-blocked (flagged), %d skipped (dead eBay link)",
+                 "%d failed, %d removed (brand rejected), %d brand-blocked (flagged), %d skipped (dead eBay link), "
+                 "%d awaiting category (worklist)",
                  onbuy_created, onbuy_updated, onbuy_deferred, onbuy_postponed, onbuy_failed, onbuy_removed,
-                 onbuy_brand_blocked, onbuy_skipped_dead)
+                 onbuy_brand_blocked, onbuy_skipped_dead, onbuy_needs_category)
     if onbuy_halt_reason:
         logger.warning("OnBuy pushes were halted early this run: %s", onbuy_halt_reason)
     logger.info("Feed products: %d, skipped: %d", feed_count, skipped_feed)
@@ -1464,6 +1480,7 @@ def main():
             f"eBay fetch failures: {fetch_failures}\n"
             f"OnBuy push failures: {onbuy_failed} (created {onbuy_created}, updated {onbuy_updated}, "
             f"deferred awaiting go-live {onbuy_deferred})\n"
+            f"Products awaiting a category (fill the Category column; not counted as failures): {onbuy_needs_category}\n"
             f"OnBuy pushes postponed (rate limit/token/network - auto-retried next run): {onbuy_postponed}"
             + (f" - pushing halted early: {onbuy_halt_reason}" if onbuy_halt_reason else "") + "\n"
             f"Rows removed (brand owned by another seller): {onbuy_removed}"
