@@ -560,9 +560,36 @@ def main():
     client = gspread.authorize(creds)
     sheet = client.open("YRA_Full_Feed_Master").sheet1
 
+    # Header hygiene BEFORE reading the data: one stray space typed into a
+    # header cell ("SKU ") makes that whole column unreadable - row.get("SKU")
+    # returns None on every row - and a blanked A1 did exactly that on the
+    # YRA Full sheet on 2026-08-06. Strip every header name, and refuse to
+    # run at all on missing/duplicated critical headers: one clear email
+    # beats a run that half-works and flags every row. (Ported from the
+    # semi tier, where a deleted header row taught this on 2026-07-29.)
+    headers = [str(h).strip() for h in sheet.row_values(1)]
+    col_map = {col: idx + 1 for idx, col in enumerate(headers) if col}
+
+    required = ["SKU", "Supplier URL", "Title", "Status", "Last Checked Time"]
+    missing = [h for h in required if h not in col_map]
+    duplicates = sorted({h for h in headers if h and headers.count(h) > 1})
+    if missing or duplicates:
+        problems = []
+        if missing:
+            problems.append("missing header(s): " + ", ".join(missing))
+        if duplicates:
+            problems.append("duplicated header(s): " + ", ".join(duplicates))
+        message = ("The Sheet's header row (row 1) is broken - " + "; ".join(problems)
+                   + f". Row 1 currently reads: {[h for h in headers if h]}. "
+                   "Fix row 1 to match sheet_headers.csv (one name per cell, spelled exactly) "
+                   "and run the sync again. No rows were touched this run.")
+        logger.error(message)
+        notify.send_alert_email("Sheet header row needs fixing", message)
+        sys.exit(1)
+
     data = sheet.get_all_records()
-    headers = sheet.row_values(1)
-    col_map = {col: idx + 1 for idx, col in enumerate(headers)}
+    # Same hygiene on the row dicts (their keys come from the header row).
+    data = [{str(k).strip(): v for k, v in row.items()} for row in data]
 
     logger.info("TOTAL ROWS IN SHEET: %d", len(data))
 
