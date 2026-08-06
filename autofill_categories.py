@@ -102,6 +102,13 @@ def main():
             applied.append((idx, sku, path + (" [FORCED]" if force and not (refused or blank) else "")))
             updates.append({"range": f"{col_letter(col_map['Category'])}{idx}", "values": [[path]]})
             updates.append({"range": f"{col_letter(col_map['Sync Status'])}{idx}", "values": [[""]]})
+        elif DRY_RUN:
+            # Explain no-ops so a zero-applied dry run is diagnosable
+            # instead of a mystery (2026-08-06).
+            logger.info("skip row %d %s: Sync Status=%r Category=%r",
+                        idx, sku,
+                        str(row.get("Sync Status") or "")[:70],
+                        str(row.get("Category") or "")[:70])
     for idx, sku, path in applied:
         logger.info("row %d %s -> %s", idx, sku, path)
     logger.info("curated categories to apply: %d", len(applied))
