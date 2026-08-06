@@ -44,6 +44,26 @@ if "Sync Status" not in col_map:
 
 POISONED_TEXT = "Failed: rejected with no reason given by OnBuy"
 
+
+def outcome_for(entry):
+    """Pure decision for one queue entry - the ONLY place a queue status
+    maps to what gets written. Returns one of:
+      ("pending", None, None, None)          - write NOTHING (see the loop)
+      ("synced", opc, product_url, "Synced")
+      ("failed", None, None, "Failed: <OnBuy's reason>")
+    Anything that isn't an explicit success/failed - including unknown or
+    missing statuses - counts as pending. The 2026-08-06 incident was this
+    exact table drifting: pending entries fell through to the failure
+    branch's WRITE and stamped 1,396 phantom failures. tests/ pins it.
+    """
+    status = entry.get("status")
+    if status == "success":
+        return ("synced", entry.get("opc", ""), entry.get("product_url", ""), "Synced")
+    if status == "failed":
+        return ("failed", None, None,
+                f"Failed: {entry.get('error_message') or 'rejected with no reason given by OnBuy'}")
+    return ("pending", None, None, None)
+
 pending = {}  # sku -> sheet row index
 poisoned = set()  # rows carrying the false Failed text (see below)
 for idx, row in enumerate(data):
@@ -119,20 +139,13 @@ existing_rows = supabase_db.fetch_full_rows(list(found.keys()))
 
 for sku, entry in found.items():
     row_index = pending[sku]
-    status = entry.get("status")
+    kind, opc, product_url, sync_status = outcome_for(entry)
 
     # "pending" (or any unrecognised status) is NOT an outcome, and must
-    # write NOTHING. The previous version special-cased pending only in the
-    # PRINT below - the write still went through the failure branch,
-    # stamping "Failed: rejected with no reason given by OnBuy" onto every
-    # still-queued row each hour (1,396 rows on the OpenMaal store by
-    # 2026-08-06). That false Failed status then reopened generate_xml's
-    # create fallback, so syncs re-submitted those products run after run
-    # (OnBuy deduplicated by uid and returned the same OPC - no duplicate
-    # products, but endless create churn and a sheet full of phantom
-    # failures). The only pending-row write allowed is the REPAIR:
-    # restoring "Pending Approval" over the poisoned text.
-    if status not in ("success", "failed"):
+    # write NOTHING - see outcome_for()'s docstring for the 2026-08-06
+    # incident this rule comes from. The only pending-row write allowed is
+    # the REPAIR: restoring "Pending Approval" over the poisoned text.
+    if kind == "pending":
         if sku in poisoned:
             sheet_updates.append({"range": f"{col_letter(col_map['Sync Status'])}{row_index}", "values": [["Pending Approval"]]})
             existing = existing_rows.get(sku)
@@ -145,23 +158,14 @@ for sku, entry in found.items():
             print(f"{sku}: still in OnBuy's approval queue (no outcome yet)")
         continue
 
-    if status == "success":
-        opc = entry.get("opc", "")
-        # OnBuy's queue history is the only place this ever appears - not in
-        # create_product/update_listing's own responses - and confirmed
-        # 2026-07-06 to be the canonical live page, distinct from whatever
-        # URL the Add Listing page's own search links to.
-        product_url = entry.get("product_url", "")
-        sync_status = "Synced"
-        listing_active = "TRUE"
-    else:  # status == "failed" - a real outcome OnBuy reported
-        opc = None
-        product_url = None
-        sync_status = f"Failed: {entry.get('error_message') or 'rejected with no reason given by OnBuy'}"
-        listing_active = "FALSE"
+    # OnBuy's queue history is the only place the OPC/product_url ever
+    # appear - not in create_product/update_listing's own responses - and
+    # confirmed 2026-07-06 to be the canonical live page, distinct from
+    # whatever URL the Add Listing page's own search links to.
+    listing_active = "TRUE" if kind == "synced" else "FALSE"
 
-    print(f"{sku}: status={status}, opc={opc}"
-          + (f", reason={entry.get('error_message') or 'no reason given'}" if status != "success" else ""))
+    print(f"{sku}: status={entry.get('status')}, opc={opc}"
+          + (f", reason={entry.get('error_message') or 'no reason given'}" if kind != "synced" else ""))
 
     if opc and "OPC" in col_map:
         sheet_updates.append({"range": f"{col_letter(col_map['OPC'])}{row_index}", "values": [[opc]]})
