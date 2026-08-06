@@ -95,6 +95,11 @@ FETCH_FAILURE_ALERT_THRESHOLD = 3
 PK_TZ = ZoneInfo("Asia/Karachi")
 
 
+class _SkipPushDead(Exception):
+    """Control-flow sentinel: a row whose eBay listing is gone and that was
+    never created on OnBuy has nothing to create - see the raise site."""
+
+
 
 # One-off maintenance switch (workflow input "recategorize"): normally an
 # existing VALID category is never overwritten - that protects the manual
@@ -858,6 +863,7 @@ def main():
     onbuy_brand_blocked = 0  # brand owned by another seller - flagged, kept (2026-08-03)
     onbuy_deferred = 0  # created earlier, listing not yet updatable on OnBuy's side
     onbuy_postponed = 0  # transient OnBuy/transport trouble - status left untouched, retried next run
+    onbuy_skipped_dead = 0  # eBay listing gone + never created on OnBuy - nothing to create (2026-08-06)
     onbuy_halt_reason = None  # set when pushing must stop for the rest of the run (rate limit / dead token)
     onbuy_pushes_this_run = 0
     rows_to_delete = []  # Sheet row numbers to remove entirely - see the
@@ -1101,6 +1107,20 @@ def main():
             )
 
             try:
+                if not already_created and not available:
+                    # Dead sourcing link on a never-created row: eBay says
+                    # the listing is gone (404/no price), so there is no
+                    # title, price, or stock to build a product from - a
+                    # create can only ever fail. 31 such rows across the
+                    # Full-tier stores were red-flagging every run with "no
+                    # matching OnBuy category" (2026-08-06), retrying
+                    # forever. Skip the push: not an error, and deliberately
+                    # NOT "Failed" (that keyword reopens the create
+                    # fallback). The row keeps its Sheet/Supabase refresh
+                    # and pushes normally if the link starts resolving again
+                    # or is replaced. (Costs one push slot of the per-run
+                    # cap - not worth restructuring the loop over.)
+                    raise _SkipPushDead()
                 if not already_created and category_id is None:
                     # A create can't succeed without a category (OnBuy 400s
                     # on a null category_id), and the matcher now refuses to
@@ -1142,6 +1162,12 @@ def main():
                     sync_status = "Synced"
                     onbuy_product_created = "TRUE"
                     onbuy_listing_active = "TRUE"
+            except _SkipPushDead:
+                onbuy_skipped_dead += 1
+                sync_status = "Skipped: eBay listing unavailable - replace or remove the link"
+                logger.info(
+                    "Row %d (SKU %s): eBay listing unavailable and never created on OnBuy "
+                    "- nothing to create, skipping the push", i, sku)
             except (TransientError, AuthError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
                 # OnBuy-side or transport trouble (rate limit, 5xx after
                 # retries, expired token even after the client's one re-auth,
@@ -1423,8 +1449,9 @@ def main():
     logger.info("DONE")
     logger.info("Updated rows: %d", updated_count)
     logger.info("OnBuy: %d created, %d updated, %d deferred (awaiting go-live), %d postponed (transient), "
-                 "%d failed, %d removed (brand rejected), %d brand-blocked (flagged)",
-                 onbuy_created, onbuy_updated, onbuy_deferred, onbuy_postponed, onbuy_failed, onbuy_removed, onbuy_brand_blocked)
+                 "%d failed, %d removed (brand rejected), %d brand-blocked (flagged), %d skipped (dead eBay link)",
+                 onbuy_created, onbuy_updated, onbuy_deferred, onbuy_postponed, onbuy_failed, onbuy_removed,
+                 onbuy_brand_blocked, onbuy_skipped_dead)
     if onbuy_halt_reason:
         logger.warning("OnBuy pushes were halted early this run: %s", onbuy_halt_reason)
     logger.info("Feed products: %d, skipped: %d", feed_count, skipped_feed)

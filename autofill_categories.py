@@ -18,6 +18,42 @@ SHEET_NAME = "YRA_Full_Feed_Master"
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
 
 CURATED = {
+    # 2026-08-06 batch - the monitor-heavy backlog refusing since 2026-07-31,
+    # diagnosed with diagnose_categories.py: no eBay Type set, no leaf named
+    # in any title. LG / iiyama / electriQ / Dell / AOC monitors:
+    "176431198422": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "177769370627": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "195060051922": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "251795961483": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "289259524585": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "334736263331": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "389238151556": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "410024645895": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "603463946627": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "603642177606": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "621064148424": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "655784881958": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "662599982725": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "682289971402": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "730849956106": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "745817010032": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "764628858909": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "778154519739": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "783014990405": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "843534195824": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    "900074836188": "Electronics & Technology > Computing & Gaming > Computer Monitors & Monitor Accessories > Computer Monitors",
+    # Lexar NM100 internal SATA SSD:
+    "145817446914": "Electronics & Technology > Computing & Gaming > Computer Components > Internal Solid State Drives",
+    # Lenovo FHD webcam:
+    "327293750246": "Electronics & Technology > Computing & Gaming > Computing Peripherals > Computer Webcams",
+    # BNC male coupler (coax connector):
+    "445736877470": "Electronics & Technology > Cables & Adapters > Adapters > Coaxial Cable Connectors",
+    # Lenovo ThinkServer 3.5" SATA HDD:
+    "914337862685": "Electronics & Technology > Computing & Gaming > Computer Components > Internal Hard Drives",
+    # Dell WM126 wireless mouse - the scorer would have WRONGLY matched
+    # this to Office Wireless Presentations Supplies from description
+    # noise; a curated valid category preempts the matcher entirely:
+    "760815897973": "Electronics & Technology > Computing & Gaming > Keyboards, Mice & Input Devices > Computer Mice",
     "995589894440": "Electronics & Technology > TV & Audio > Speakers & Sound Systems > Radios",
     "996860074254": "Musical Instruments & DJ > String Instruments & Accessories > Guitar Accessories > Guitar Amplifiers",
     "998866897639": "Musical Instruments & DJ > DJ Equipment > DJ Accessories > DJ Lights",
