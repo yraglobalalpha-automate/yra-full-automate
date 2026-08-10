@@ -21,7 +21,7 @@ def _extract_helpers():
              if (isinstance(n, ast.FunctionDef) and n.name in wanted)
              or (isinstance(n, ast.Assign) and any(
                  getattr(t, "id", None) in ("_CATEGORY_STOPWORDS", "_GUARDED_SUBTREES",
-                                            "TITLE_PHRASE_CATEGORIES")
+                                            "TITLE_PHRASE_CATEGORIES", "TITLE_PHRASE_VETO")
                  for t in n.targets))]
     ns = {"re": re}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SRC), "exec"), ns)

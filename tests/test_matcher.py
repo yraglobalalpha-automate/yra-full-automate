@@ -117,6 +117,20 @@ def test_smart_watch_title_is_not_captured_by_tv_phrases():
     assert "TVs" not in (result or "")
 
 
+def test_tv_accessory_titles_are_vetoed_from_the_phrase_override():
+    # A remote control, a streaming box, and a projector all SAY "Smart TV"
+    # - the veto list must keep the phrase stage away from them.
+    for title in (
+        "CT-90344 FOR TOSHIBA TV REPLACEMENT REMOTE CONTROL CT90344 SMART TV",
+        "Manhattan Aero Smart TV Box 4K HDR Streaming with TiVo",
+        "SUREWHEEL SW30 AutoFocus Video Projector 5G WiFi for Smart TV",
+        "TV Strip Lights LED Backlight USB Music Sync Smart TV",
+    ):
+        result, stage = _result(title)
+        assert stage != "title-phrase", title
+        assert not (result or "").endswith("> TVs"), title
+
+
 def test_scorer_still_runs_before_fallback():
     # A clear accessory listing must resolve in the scorer; the fallback
     # only ever runs after a refusal.

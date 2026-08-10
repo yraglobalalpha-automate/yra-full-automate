@@ -152,9 +152,23 @@ TITLE_PHRASE_CATEGORIES = (
 )
 
 
+# Titles that CONTAIN a device phrase but are actually accessories or a
+# different device ("SMART TV REMOTE CONTROL", "Smart TV Box", a projector
+# "for Smart TV") - any of these words in the title vetoes the phrase
+# override and lets the normal stages decide (2026-08-10, found by the
+# category correctness scan on its first pass).
+TITLE_PHRASE_VETO = {
+    "remote", "control", "bracket", "mount", "stand", "strip", "light",
+    "backlight", "sticker", "cover", "case", "protector", "cable", "box",
+    "projector", "soundbar", "aerial", "antenna",
+}
+
+
 def title_phrase_category(title):
     """The category a hand-curated title phrase dictates, or None."""
     seq = [_stem(w) for w in re.findall(r"\w+", str(title).lower())]
+    if TITLE_PHRASE_VETO & set(seq):
+        return None
     for phrase, path in TITLE_PHRASE_CATEGORIES:
         n = len(phrase)
         if n <= len(seq) and any(tuple(seq[i:i + n]) == phrase for i in range(len(seq) - n + 1)):

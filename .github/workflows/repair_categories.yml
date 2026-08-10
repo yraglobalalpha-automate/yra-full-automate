@@ -1,10 +1,14 @@
-name: Scan Categories (one-off, read-only)
+name: Repair Categories (one-off)
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report what would change without writing (yes/no)"
+        default: "yes"
 
 jobs:
-  scan:
+  repair:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -20,8 +24,8 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Scan stored categories
+      - name: Repair phrase-disagreeing categories
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python scan_categories.py
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+        run: python repair_categories.py
