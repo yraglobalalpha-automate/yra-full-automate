@@ -133,6 +133,35 @@ def parse_time(value):
         return datetime(2000, 1, 1)
 
 
+
+
+# Hand-curated title PHRASES that name the product outright and must beat
+# the word scorer (2026-08-10). Two Toshiba "... Smart TV Bluetooth WiFi"
+# rows landed in Network Bluetooth Adapters: "bluetooth" is a triple-
+# weighted title word, while no TV leaf is reachable by scoring at all -
+# "TVs" tokenizes to a 2-letter word the tokenizer drops. A contiguous
+# phrase in the title is checked BEFORE the scorer; being hand-curated,
+# first match wins and there is no ambiguity to arbitrate. Keep entries
+# stemmed (category_match_tokens conventions) and add sparingly - one
+# phrase covers a whole device family, unlike per-SKU curation.
+TITLE_PHRASE_CATEGORIES = (
+    (("smart", "tv"), "Electronics & Technology > TV & Audio > TVs & Accessories > TVs"),
+    (("led", "tv"), "Electronics & Technology > TV & Audio > TVs & Accessories > TVs"),
+    (("oled", "tv"), "Electronics & Technology > TV & Audio > TVs & Accessories > TVs"),
+    (("qled", "tv"), "Electronics & Technology > TV & Audio > TVs & Accessories > TVs"),
+)
+
+
+def title_phrase_category(title):
+    """The category a hand-curated title phrase dictates, or None."""
+    seq = [_stem(w) for w in re.findall(r"\w+", str(title).lower())]
+    for phrase, path in TITLE_PHRASE_CATEGORIES:
+        n = len(phrase)
+        if n <= len(seq) and any(tuple(seq[i:i + n]) == phrase for i in range(len(seq) - n + 1)):
+            return path
+    return None
+
+
 def carry_forward(fresh, stored, default=None):
     """First non-None value wins - this run's value, else what Supabase
     already had, else `default`.
@@ -732,6 +761,10 @@ def main():
         by_type = type_category(product_type, title, description)
         if by_type:
             return by_type
+        by_phrase = title_phrase_category(title)
+        if by_phrase:
+            logger.info("Category matched via curated title phrase -> %s", by_phrase)
+            return by_phrase
         title_words = category_match_tokens(f"{title}\n{current_category}")
         desc_words = category_match_tokens(description) - title_words
         all_words = title_words | desc_words

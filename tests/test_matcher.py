@@ -94,6 +94,29 @@ def test_genuine_post_box_still_matches_via_phrase():
     assert result.endswith("> Post Boxes")
 
 
+def test_smart_tv_with_bluetooth_goes_to_tvs_not_adapters():
+    # THE 2026-08-10 incident: two Toshiba Smart TVs landed in Network
+    # Bluetooth Adapters - "bluetooth" is a triple-weighted title word and
+    # no TV leaf is reachable by scoring ("TVs" tokenizes to a dropped
+    # 2-letter word). The curated title phrase must win first.
+    result, stage = _result(
+        "Toshiba Westcoast 50UF2653DB 50 Inch LED 4K Ultra HD Smart TV Bluetooth WiFi")
+    assert stage == "title-phrase"
+    assert result.endswith("> TVs")
+    assert "Bluetooth" not in result
+
+
+def test_plain_led_tv_title_also_goes_to_tvs():
+    result, stage = _result("Veltech VR50UX630 50 Inch LED 4K Ultra HD Smart TV WiFi")
+    assert stage == "title-phrase"
+    assert result.endswith("> TVs")
+
+
+def test_smart_watch_title_is_not_captured_by_tv_phrases():
+    result, _ = _result("Smart Watch for Men Women Fitness Tracker")
+    assert "TVs" not in (result or "")
+
+
 def test_scorer_still_runs_before_fallback():
     # A clear accessory listing must resolve in the scorer; the fallback
     # only ever runs after a refusal.

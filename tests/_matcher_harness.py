@@ -16,11 +16,12 @@ SRC = REPO / "generate_xml.py"
 
 def _extract_helpers():
     tree = ast.parse(SRC.read_text(encoding="utf-8"))
-    wanted = {"tokenize", "_stem", "category_match_tokens"}
+    wanted = {"tokenize", "_stem", "category_match_tokens", "title_phrase_category"}
     nodes = [n for n in tree.body
              if (isinstance(n, ast.FunctionDef) and n.name in wanted)
              or (isinstance(n, ast.Assign) and any(
-                 getattr(t, "id", None) in ("_CATEGORY_STOPWORDS", "_GUARDED_SUBTREES")
+                 getattr(t, "id", None) in ("_CATEGORY_STOPWORDS", "_GUARDED_SUBTREES",
+                                            "TITLE_PHRASE_CATEGORIES")
                  for t in n.targets))]
     ns = {"re": re}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SRC), "exec"), ns)
@@ -32,6 +33,7 @@ tokenize = _ns["tokenize"]
 _stem = _ns["_stem"]
 category_match_tokens = _ns["category_match_tokens"]
 _GUARDED_SUBTREES = _ns["_GUARDED_SUBTREES"]
+title_phrase_category = _ns["title_phrase_category"]
 
 onbuy_categories = []
 with open(REPO / "onbuy_categories_only.csv", newline="", encoding="utf-8") as f:
@@ -55,6 +57,10 @@ def map_onbuy_category(title, current_category, description=""):
     """Replica of generate_xml.main()'s scorer + phrase fallback (the Type
     stage is exercised separately in production; every regression case here
     had an empty eBay Type). Returns (result, stage)."""
+    by_phrase = title_phrase_category(title)
+    if by_phrase:
+        return by_phrase, "title-phrase"
+
     title_words = category_match_tokens(f"{title}\n{current_category}")
     desc_words = category_match_tokens(description) - title_words
     all_words = title_words | desc_words
