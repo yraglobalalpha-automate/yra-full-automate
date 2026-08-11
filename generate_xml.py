@@ -922,7 +922,11 @@ def main():
         pending_activation = []
         for idx, row in enumerate(data):
             status = str(row.get("Sync Status") or "").strip()
-            if not status.startswith("Pending Approval"):
+            # "Pending Approval" = fresh create; "Synced" with a blank Last
+            # OnBuy Sync = the hourly backfill confirmed the queue before this
+            # pass got to the row - either way we have never pushed its
+            # price/stock, so it is still sitting 0/0 inactive on OnBuy.
+            if not (status.startswith("Pending Approval") or status.startswith("Synced")):
                 continue
             if str(row.get("Last OnBuy Sync") or "").strip():
                 continue
@@ -944,8 +948,12 @@ def main():
         activation_updates = []
         activated = act_bounced = act_waiting = 0
         now_act = datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        # The pass never takes more than half the run's push budget, so a
+        # large never-synced backlog drains over a few runs without starving
+        # the main loop's creates/updates.
+        act_cap = max(1, ONBUY_MAX_PUSHES_PER_RUN // 2)
         for idx, sku, a_price, a_stock, _ in pending_activation:
-            if onbuy_pushes_this_run >= ONBUY_MAX_PUSHES_PER_RUN or onbuy_halt_reason is not None:
+            if onbuy_pushes_this_run >= act_cap or onbuy_halt_reason is not None:
                 break
             onbuy_pushes_this_run += 1
             i = idx + 2
