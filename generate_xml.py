@@ -893,6 +893,7 @@ def main():
     onbuy_removed = 0
     onbuy_brand_blocked = 0  # brand owned by another seller - flagged, kept (2026-08-03)
     onbuy_deferred = 0  # created earlier, listing not yet updatable on OnBuy's side
+    onbuy_suspended_locked = 0  # listing suspended on OnBuy - edits rejected until reactivation
     onbuy_postponed = 0  # transient OnBuy/transport trouble - status left untouched, retried next run
     onbuy_skipped_dead = 0  # eBay listing gone + never created on OnBuy - nothing to create (2026-08-06)
     onbuy_needs_category = 0  # refusals awaiting a Category cell - a worklist, not failures (2026-08-06)
@@ -1418,6 +1419,21 @@ def main():
                         "updatable yet - deferring, not re-creating",
                         i, sku, opc_on_record or "pending",
                     )
+                elif already_created and "suspended listings cannot be edited" in str(exc).lower():
+                    # The listing exists but OnBuy has it suspended (e.g. the
+                    # zero-price auto-suspension) and rejects every edit until
+                    # the suspension lifts. NOT "Failed" - on a row with no
+                    # OPC on record that reopens the create fallback and mints
+                    # a duplicate product. Keep the created-guard satisfied,
+                    # stamp the sync so the row rotates instead of holding a
+                    # front slot, and retry on every future visit; the moment
+                    # OnBuy reactivates the listing the update just succeeds.
+                    onbuy_suspended_locked += 1
+                    sync_status = "Synced (suspended on OnBuy - awaiting reactivation)"
+                    last_onbuy_sync = now_str
+                    logger.info(
+                        "Row %d (SKU %s): listing suspended on OnBuy - edits rejected until "
+                        "reactivation, will keep retrying on rotation", i, sku)
                 elif "no matching OnBuy category" in str(exc):
                     # A product waiting for its Category cell is a WORKLIST
                     # item, not a system failure (2026-08-06): with a growing
@@ -1677,9 +1693,9 @@ def main():
     logger.info("Updated rows: %d", updated_count)
     logger.info("OnBuy: %d created, %d updated, %d deferred (awaiting go-live), %d postponed (transient), "
                  "%d failed, %d removed (brand rejected), %d brand-blocked (flagged), %d skipped (dead eBay link), "
-                 "%d awaiting category (worklist)",
+                 "%d awaiting category (worklist), %d suspended-locked",
                  onbuy_created, onbuy_updated, onbuy_deferred, onbuy_postponed, onbuy_failed, onbuy_removed,
-                 onbuy_brand_blocked, onbuy_skipped_dead, onbuy_needs_category)
+                 onbuy_brand_blocked, onbuy_skipped_dead, onbuy_needs_category, onbuy_suspended_locked)
     if onbuy_halt_reason:
         logger.warning("OnBuy pushes were halted early this run: %s", onbuy_halt_reason)
     logger.info("Feed products: %d, skipped: %d", feed_count, skipped_feed)
