@@ -886,6 +886,24 @@ def main():
         if category_updates:
             sheet.batch_update(category_updates)
 
+    updated_count = 0
+    onbuy_created = 0
+    onbuy_updated = 0
+    onbuy_failed = 0
+    onbuy_removed = 0
+    onbuy_brand_blocked = 0  # brand owned by another seller - flagged, kept (2026-08-03)
+    onbuy_deferred = 0  # created earlier, listing not yet updatable on OnBuy's side
+    onbuy_postponed = 0  # transient OnBuy/transport trouble - status left untouched, retried next run
+    onbuy_skipped_dead = 0  # eBay listing gone + never created on OnBuy - nothing to create (2026-08-06)
+    onbuy_needs_category = 0  # refusals awaiting a Category cell - a worklist, not failures (2026-08-06)
+    onbuy_halt_reason = None  # set when pushing must stop for the rest of the run (rate limit / dead token)
+    onbuy_pushes_this_run = 0
+    rows_to_delete = []  # Sheet row numbers to remove entirely - see the
+    # "supplied brand is owned by another seller" check below. Applied after
+    # every other Sheet write this run, in descending row order, so deleting
+    # one doesn't shift the row numbers the other writes/highlights already
+    # targeted.
+
     # ================= ACTIVATION PASS (2026-08-11) =================
     # OnBuy support confirmed: product-create ignores embedded price/stock
     # BY DESIGN - every new listing is born 0/0 and inactive, and only a
@@ -1025,23 +1043,6 @@ def main():
         )
         sys.exit(1)
 
-    updated_count = 0
-    onbuy_created = 0
-    onbuy_updated = 0
-    onbuy_failed = 0
-    onbuy_removed = 0
-    onbuy_brand_blocked = 0  # brand owned by another seller - flagged, kept (2026-08-03)
-    onbuy_deferred = 0  # created earlier, listing not yet updatable on OnBuy's side
-    onbuy_postponed = 0  # transient OnBuy/transport trouble - status left untouched, retried next run
-    onbuy_skipped_dead = 0  # eBay listing gone + never created on OnBuy - nothing to create (2026-08-06)
-    onbuy_needs_category = 0  # refusals awaiting a Category cell - a worklist, not failures (2026-08-06)
-    onbuy_halt_reason = None  # set when pushing must stop for the rest of the run (rate limit / dead token)
-    onbuy_pushes_this_run = 0
-    rows_to_delete = []  # Sheet row numbers to remove entirely - see the
-    # "supplied brand is owned by another seller" check below. Applied after
-    # every other Sheet write this run, in descending row order, so deleting
-    # one doesn't shift the row numbers the other writes/highlights already
-    # targeted.
     removed_skus = []  # matching SKUs, for the Supabase delete + summary log
     supabase_rows = []  # one upsert for the whole run - every row must have
     # identical keys (PostgREST's bulk-upsert requirement) AND every NOT NULL
