@@ -1242,7 +1242,19 @@ def main():
                         additional_images=additional_images,
                     )
                 logger.info("OnBuy %s: %s", action, sku)
-                last_onbuy_sync = now_str
+                # Stamp ONLY updates. OnBuy confirmed (support, 2026-08-11)
+                # that product-create IGNORES the embedded price/stock by
+                # design: the listing is born 0/0 and inactive, and only a
+                # follow-up by-SKU update activates it (~30 min processing).
+                # Stamping on create rotated the fresh row to the BACK of a
+                # multi-day queue, so the activating update arrived days
+                # late - after OnBuy's "Price below minimum" auto-suspension
+                # had already fired, and suspended listings reject all
+                # edits. An unstamped created row keeps front-of-queue
+                # priority: the very next run sends the activating update
+                # while the listing is still editable.
+                if action == "updated":
+                    last_onbuy_sync = now_str
                 if action == "created":
                     onbuy_created += 1
                     # Accepted into OnBuy's async approval queue - not confirmed live yet.
