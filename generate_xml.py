@@ -886,6 +886,81 @@ def main():
         if category_updates:
             sheet.batch_update(category_updates)
 
+    # ================= ACTIVATION PASS (2026-08-11) =================
+    # OnBuy support confirmed: product-create ignores embedded price/stock
+    # BY DESIGN - every new listing is born 0/0 and inactive, and only a
+    # by-SKU stock/price update activates it. Waiting for the row's next
+    # batch visit works on a small catalog (GTV/YRA activated thousands
+    # that way) but loses the race against the zero-price auto-suspension
+    # on a large one (OpenMaal's 6,000-row load: 3-6 day revisit vs 2-4
+    # day suspension - and suspended listings reject all edits). So every
+    # run FIRST activates created-but-never-synced rows directly from the
+    # price/stock already on the row: no eBay calls, shares the OnBuy push
+    # cap, freshest rows first. A row whose update bounces ("SKU does not
+    # exist" - not addressable yet, or already suspended) gets its Last
+    # OnBuy Sync stamped so it falls back to normal rotation instead of
+    # monopolising this pass every run.
+    if ONBUY_API_PUSH_ENABLED and onbuy_ready:
+        pending_activation = []
+        for idx, row in enumerate(data):
+            status = str(row.get("Sync Status") or "").strip()
+            if not status.startswith("Pending Approval"):
+                continue
+            if str(row.get("Last OnBuy Sync") or "").strip():
+                continue
+            sku = str(row.get("SKU") or "").strip()
+            try:
+                a_price = float(row.get("Selling Price (£)") or 0)
+                a_stock = int(float(row.get("Stock") or 0))
+            except (TypeError, ValueError):
+                continue
+            if not sku or a_price <= 0 or a_stock <= 0:
+                continue
+            pending_activation.append((idx, sku, a_price, a_stock,
+                                       str(row.get("Last Checked Time") or "")))
+        # Freshest creations first - they are the ones still inside the
+        # editable window.
+        pending_activation.sort(key=lambda t: t[4], reverse=True)
+        if pending_activation:
+            logger.info("Activation pass: %d created-but-inactive row(s) pending", len(pending_activation))
+        activation_updates = []
+        activated = act_bounced = 0
+        now_act = datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        for idx, sku, a_price, a_stock, _ in pending_activation:
+            if onbuy_pushes_this_run >= ONBUY_MAX_PUSHES_PER_RUN or onbuy_halt_reason is not None:
+                break
+            onbuy_pushes_this_run += 1
+            i = idx + 2
+            try:
+                onbuy.update_listing(sku=sku, price=a_price, stock=a_stock)
+                activated += 1
+                if "Sync Status" in col_map:
+                    activation_updates.append({"range": f"{col_letter(col_map['Sync Status'])}{i}", "values": [["Synced"]]})
+                if "Last OnBuy Sync" in col_map:
+                    activation_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_act]]})
+                if "OnBuy Listing Active" in col_map:
+                    activation_updates.append({"range": f"{col_letter(col_map['OnBuy Listing Active'])}{i}", "values": [["TRUE"]]})
+            except (TransientError, AuthError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                logger.warning("Activation postponed for SKU %s: %s", sku, exc)
+                if isinstance(exc, AuthError):
+                    run_had_errors = True
+                if isinstance(exc, (RateLimitError, AuthError)):
+                    onbuy_halt_reason = str(exc)[:200]
+            except Exception as exc:
+                act_bounced += 1
+                logger.info("Activation bounced for SKU %s (%s) - stamped back to rotation", sku, str(exc)[:120])
+                if "Last OnBuy Sync" in col_map:
+                    activation_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_act]]})
+            time.sleep(0.5)
+        if activation_updates:
+            try:
+                with_retry(lambda: sheet.batch_update(
+                    [dict(u) for u in activation_updates]), what="activation sheet update", max_attempts=3)
+            except Exception as exc:
+                logger.error("Activation sheet update failed: %s", exc)
+        if activated or act_bounced:
+            logger.info("Activation pass: %d activated, %d bounced to rotation", activated, act_bounced)
+
     # ================= PRODUCT ORDER =================
     # Rows with no usable Supplier URL yet (e.g. a SKU pre-filled ahead of the
     # rest of the row) can never actually be processed - the main loop below
