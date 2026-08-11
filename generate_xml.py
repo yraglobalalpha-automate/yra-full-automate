@@ -942,7 +942,7 @@ def main():
         if pending_activation:
             logger.info("Activation pass: %d created-but-inactive row(s) pending", len(pending_activation))
         activation_updates = []
-        activated = act_bounced = 0
+        activated = act_bounced = act_waiting = 0
         now_act = datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
         for idx, sku, a_price, a_stock, _ in pending_activation:
             if onbuy_pushes_this_run >= ONBUY_MAX_PUSHES_PER_RUN or onbuy_halt_reason is not None:
@@ -965,10 +965,18 @@ def main():
                 if isinstance(exc, (RateLimitError, AuthError)):
                     onbuy_halt_reason = str(exc)[:200]
             except Exception as exc:
-                act_bounced += 1
-                logger.info("Activation bounced for SKU %s (%s) - stamped back to rotation", sku, str(exc)[:120])
-                if "Last OnBuy Sync" in col_map:
-                    activation_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_act]]})
+                if "sku does not exist" in str(exc).lower():
+                    # OnBuy's queue hasn't made the SKU addressable yet - leave
+                    # the row pending (no stamp) so the next run's pass retries
+                    # it. Genuinely rejected products drop out when the hourly
+                    # backfill rewrites their status.
+                    act_waiting += 1
+                    logger.info("Activation waiting for SKU %s (not yet addressable) - retry next run", sku)
+                else:
+                    act_bounced += 1
+                    logger.info("Activation bounced for SKU %s (%s) - stamped back to rotation", sku, str(exc)[:120])
+                    if "Last OnBuy Sync" in col_map:
+                        activation_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_act]]})
             time.sleep(0.5)
         if activation_updates:
             try:
@@ -976,8 +984,8 @@ def main():
                     [dict(u) for u in activation_updates]), what="activation sheet update", max_attempts=3)
             except Exception as exc:
                 logger.error("Activation sheet update failed: %s", exc)
-        if activated or act_bounced:
-            logger.info("Activation pass: %d activated, %d bounced to rotation", activated, act_bounced)
+        if activated or act_bounced or act_waiting:
+            logger.info("Activation pass: %d activated, %d awaiting addressability, %d bounced to rotation", activated, act_waiting, act_bounced)
 
     # ================= PRODUCT ORDER =================
     # Rows with no usable Supplier URL yet (e.g. a SKU pre-filled ahead of the
