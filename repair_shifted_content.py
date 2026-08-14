@@ -78,13 +78,24 @@ def main():
         path_to_id = {row["OnBuy Category Path"].strip().lower(): row["Category ID"].strip()
                       for row in csv.DictReader(f) if row.get("OnBuy Category Path")}
 
-    targets, skipped_incomplete = [], 0
-    for r in rows:
+    targets, skipped_incomplete, collisions = [], 0, []
+    for i, r in enumerate(rows):
         sku = str(r.get("SKU") or "").strip()
         if not sku or sku not in listings:
             continue
         title = str(r.get("Title") or "").strip()
         if not title or similar(listings[sku], title) >= 0.5:
+            continue
+        # Only the confirmed one-row-shift cohort is safe to repair: the
+        # listing shows the ROW ABOVE's product, i.e. it is OUR OWN
+        # catalogue entry with the neighbour's content. A mismatch that
+        # does NOT match the row above is a barcode collision - our offer
+        # got attached to a foreign catalogue product, and re-pushing with
+        # the same bogus code would re-match (or vandalise a shared
+        # product page). Those are reported for delist+relist instead.
+        above = str(rows[i - 1].get("Title") or "").strip() if i else ""
+        if not above or similar(listings[sku], above) < 0.5:
+            collisions.append((i + 2, sku, listings[sku][:60], title[:60]))
             continue
         cat_id = str(r.get("Category ID") or "").strip()
         if not cat_id:
@@ -94,8 +105,10 @@ def main():
             skipped_incomplete += 1
             continue
         targets.append((sku, r, listings[sku], cat_id))
-    log.info("mismatched + repairable: %d (skipped incomplete: %d)",
-             len(targets), skipped_incomplete)
+    log.info("shift-repairable: %d (skipped incomplete: %d) | barcode-collision (report-only): %d",
+             len(targets), skipped_incomplete, len(collisions))
+    for c in collisions:
+        log.info("  COLLISION row %d SKU %s | onbuy: %s | sheet: %s", *c)
     if REPAIR_LIMIT:
         targets = targets[:REPAIR_LIMIT]
         log.info("REPAIR_LIMIT: repairing first %d", len(targets))
