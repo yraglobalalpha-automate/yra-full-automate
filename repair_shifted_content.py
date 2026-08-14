@@ -97,6 +97,15 @@ def main():
         if not above or similar(listings[sku], above) < 0.5:
             collisions.append((i + 2, sku, listings[sku][:60], title[:60]))
             continue
+        # If this SKU and the row above share ONE catalogue product (same
+        # OPC), rewriting it for this SKU would corrupt it for the other -
+        # OnBuy's broken-matcher era cross-linked some consecutive
+        # submissions onto a single product. Those need delist+relist.
+        opc = str(r.get("OPC") or "").strip().upper()
+        opc_above = str(rows[i - 1].get("OPC") or "").strip().upper() if i else ""
+        if not opc or opc in ("", "PENDING") or opc == opc_above:
+            collisions.append((i + 2, sku, listings[sku][:60], "SHARED/NO OPC - " + title[:44]))
+            continue
         cat_id = str(r.get("Category ID") or "").strip()
         if not cat_id:
             cat_id = path_to_id.get(str(r.get("Category") or "").strip().lower(), "")
