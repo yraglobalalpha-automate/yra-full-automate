@@ -79,6 +79,14 @@ def main():
         lname, lstock = listings[sku]
         if not title or similar(lname, title) >= 0.5:
             continue
+        # Already at zero (a previous pass got it, or it was empty anyway):
+        # nothing to protect - skipping makes every pass pure progress, so
+        # the chain converges instead of redoing the same head each run.
+        try:
+            if int(float(lstock or 0)) == 0:
+                continue
+        except (TypeError, ValueError):
+            pass
         above = str(rows[i - 1].get("Title") or "").strip() if i else ""
         kind = "shift" if above and similar(lname, above) >= 0.5 else "collision"
         try:
