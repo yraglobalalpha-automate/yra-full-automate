@@ -9,6 +9,7 @@ since creation IGNORES embedded price/stock by design, the live offer's
 price and stock are untouched. Rows must carry Title + Category ID +
 image to qualify. DRY_RUN default on; REPAIR_LIMIT caps a run (canary=3).
 Changes are queued by OnBuy and take a while to show - rescan later."""
+import csv
 import json
 import logging
 import os
@@ -71,6 +72,12 @@ def main():
     sheet = gspread.authorize(creds).open("YRA_Full_Feed_Master").sheet1
     rows = sheet.get_all_records()
 
+    # Adopted/migrated rows never went through a create, so their Category
+    # ID cell is blank - resolve it from the Category path instead.
+    with open("onbuy_categories_only.csv", newline="", encoding="utf-8") as f:
+        path_to_id = {row["OnBuy Category Path"].strip().lower(): row["Category ID"].strip()
+                      for row in csv.DictReader(f) if row.get("OnBuy Category Path")}
+
     targets, skipped_incomplete = [], 0
     for r in rows:
         sku = str(r.get("SKU") or "").strip()
@@ -80,24 +87,26 @@ def main():
         if not title or similar(listings[sku], title) >= 0.5:
             continue
         cat_id = str(r.get("Category ID") or "").strip()
+        if not cat_id:
+            cat_id = path_to_id.get(str(r.get("Category") or "").strip().lower(), "")
         image = str(r.get("Image URL") or "").strip()
         if not cat_id or not image:
             skipped_incomplete += 1
             continue
-        targets.append((sku, r, listings[sku]))
+        targets.append((sku, r, listings[sku], cat_id))
     log.info("mismatched + repairable: %d (skipped incomplete: %d)",
              len(targets), skipped_incomplete)
     if REPAIR_LIMIT:
         targets = targets[:REPAIR_LIMIT]
         log.info("REPAIR_LIMIT: repairing first %d", len(targets))
-    for sku, _, lname in targets[:10]:
+    for sku, _, lname, _cid in targets[:10]:
         log.info("  target %s (onbuy shows: %s)", sku, lname[:60])
     if DRY_RUN:
         log.info("DRY RUN - nothing submitted")
         return
 
     repaired = failed = 0
-    for sku, r, _ in targets:
+    for sku, r, _, cat_id in targets:
         digits = re.sub(r"\D", "", sku)
         ean = str(r.get("EAN") or "").strip() or digits
         extra = [u.strip() for u in str(r.get("Additional Images") or "").split(",") if u.strip()]
@@ -109,7 +118,7 @@ def main():
                 title=str(r.get("Title") or "").strip(),
                 description=str(r.get("Description") or ""),
                 brand=str(r.get("Brand") or "").strip() or "Unbranded",
-                category_id=int(float(r.get("Category ID"))),
+                category_id=int(float(cat_id)),
                 price=price,
                 main_image=str(r.get("Image URL") or "").strip(),
                 additional_images=extra,
