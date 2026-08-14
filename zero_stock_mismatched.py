@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -105,17 +106,26 @@ def main():
         return
 
     zeroed = failed = 0
-    for rownum, sku, kind, _, _, price, _ in targets:
+    # Account quota is 12,000 calls/day (user-confirmed) - the stops we hit
+    # were short-window burst limits. Pace at 1 call/second and, on a burst
+    # limit, wait it out and retry the same SKU instead of abandoning the run.
+    idx = 0
+    while idx < len(targets):
+        rownum, sku, kind, _, _, price, _ = targets[idx]
         try:
             onbuy.update_listing(sku=sku, price=price, stock=0)
             zeroed += 1
             log.info("ZEROED %s (%s, row %d)", sku, kind, rownum)
-        except RateLimitError as exc:
-            log.warning("rate limited (%s) - stopping; re-dispatch to continue", exc)
-            break
+            idx += 1
+        except RateLimitError:
+            log.warning("burst limit at %d/%d - waiting 90s and continuing", idx, len(targets))
+            time.sleep(90)
+            continue
         except Exception as exc:
             failed += 1
             log.warning("ZERO %s failed - %s", sku, str(exc)[:150])
+            idx += 1
+        time.sleep(1.0)
     log.info("DONE: %d zeroed, %d failed, %d untouched", zeroed, failed,
              len(targets) - zeroed - failed)
 
