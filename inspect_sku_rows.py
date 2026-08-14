@@ -10,7 +10,8 @@ import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-TARGETS = {"941214867068", "939828415904"}
+import os as _os
+TARGETS = set((_os.getenv("INSPECT_SKUS") or "941214867068,939828415904").split(","))
 
 
 def main():
