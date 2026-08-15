@@ -905,6 +905,79 @@ def main():
     # one doesn't shift the row numbers the other writes/highlights already
     # targeted.
 
+    # ================= OUT-OF-STOCK PASS (2026-08-15) =================
+    # A row that goes out of stock gets its sheet refresh immediately, but
+    # its OnBuy push competed for the same capped slots as everything else,
+    # and a capped-out row only retried on its NEXT rotation visit (~1.5
+    # days on a large catalog) - so OnBuy kept selling sold-out products
+    # (user-reported oversell risk, 4 known SKUs on this store's sibling).
+    # Out of stock is the one state that must never wait: before ANY other
+    # push, zero the OnBuy stock of every row whose sheet says 0 but whose
+    # last push predates its last data refresh. Runs first = highest
+    # priority; steady-state it is a trickle (only newly-OOS rows).
+    if ONBUY_API_PUSH_ENABLED and onbuy_ready:
+        oos_pending = []
+        for idx, row in enumerate(data):
+            status = str(row.get("Sync Status") or "").strip()
+            if not (status.startswith("Synced") or status.startswith("Pending Approval")):
+                continue
+            raw_stock = str(row.get("Stock") if row.get("Stock") is not None else "").strip()
+            if raw_stock == "":
+                continue
+            try:
+                if int(float(raw_stock)) != 0:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            if parse_time(row.get("Last OnBuy Sync", "")) >= parse_time(row.get("Last Checked Time", "")):
+                continue  # the last push already carried this state
+            sku = str(row.get("SKU") or "").strip()
+            if not sku:
+                continue
+            try:
+                price = float(row.get("Selling Price (£)") or 0) or 0.01
+            except (TypeError, ValueError):
+                price = 0.01
+            oos_pending.append((idx, sku, price))
+        if oos_pending:
+            logger.info("OOS pass: %d out-of-stock row(s) with a stale OnBuy push", len(oos_pending))
+        oos_done = oos_bounced = 0
+        now_oos = datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        oos_updates = []
+        for idx, sku, price in oos_pending:
+            if onbuy_pushes_this_run >= ONBUY_MAX_PUSHES_PER_RUN or onbuy_halt_reason is not None:
+                break
+            onbuy_pushes_this_run += 1
+            i = idx + 2
+            try:
+                onbuy.update_listing(sku=sku, price=price, stock=0)
+                oos_done += 1
+                if "Last OnBuy Sync" in col_map:
+                    oos_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_oos]]})
+            except (TransientError, AuthError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                logger.warning("OOS push postponed for SKU %s: %s", sku, exc)
+                if isinstance(exc, AuthError):
+                    run_had_errors = True
+                if isinstance(exc, (RateLimitError, AuthError)):
+                    onbuy_halt_reason = str(exc)[:200]
+            except Exception as exc:
+                # Hidden/suspended listings reject the update - stamp so the
+                # row doesn't monopolise this pass every run; it re-enters
+                # if a later refresh changes its state again.
+                oos_bounced += 1
+                logger.info("OOS push bounced for SKU %s (%s) - stamped", sku, str(exc)[:120])
+                if "Last OnBuy Sync" in col_map:
+                    oos_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_oos]]})
+            time.sleep(0.5)
+        if oos_updates:
+            try:
+                with_retry(lambda: sheet.batch_update(
+                    [dict(u) for u in oos_updates]), what="OOS sheet update", max_attempts=3)
+            except Exception as exc:
+                logger.error("OOS sheet update failed: %s", exc)
+        if oos_done or oos_bounced:
+            logger.info("OOS pass: %d zeroed on OnBuy, %d bounced", oos_done, oos_bounced)
+
     # ================= ACTIVATION PASS (2026-08-11) =================
     # OnBuy support confirmed: product-create ignores embedded price/stock
     # BY DESIGN - every new listing is born 0/0 and inactive, and only a
