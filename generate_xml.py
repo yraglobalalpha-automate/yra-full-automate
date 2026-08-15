@@ -935,12 +935,51 @@ def main():
             if not sku:
                 continue
             try:
-                price = float(row.get("Selling Price (£)") or 0) or 0.01
+                price = float(row.get("Selling Price (£)") or 0)
             except (TypeError, ValueError):
-                price = 0.01
-            oos_pending.append((idx, sku, price))
+                price = 0.0
+            oos_pending.append((idx, sku, price if price > 0 else None))
         if oos_pending:
             logger.info("OOS pass: %d out-of-stock row(s) with a stale OnBuy push", len(oos_pending))
+        if any(p is None for _, _, p in oos_pending):
+            # A row with no usable sheet price must not push a placeholder -
+            # 0.01 invites the "Price below minimum" auto-suspension, which
+            # would lock the listing against its restock update later. Use
+            # the listing's own current price; skip if neither side has one.
+            from onbuy_client import BASE_URL as _oos_base
+            _lp = {}
+            _off = 0
+            while True:
+                def _oos_page(off=_off):
+                    r = onbuy._send("GET", f"{_oos_base}/listings", what="OOS listings page",
+                                    params={"site_id": onbuy.site_id, "limit": 100, "offset": off},
+                                    timeout=60)
+                    r.raise_for_status()
+                    return r
+                try:
+                    _body = with_retry(_oos_page, what=f"OOS listings page {_off}", max_attempts=3).json()
+                except Exception as exc:
+                    logger.warning("OOS listing-price sweep failed (%s) - price-less rows skip this run", exc)
+                    break
+                _items = _body.get("results") if isinstance(_body, dict) else _body
+                if not isinstance(_items, list) or not _items:
+                    break
+                for _it in _items:
+                    _it = _it or {}
+                    _s = str(_it.get("sku") or "").strip()
+                    if _s:
+                        try:
+                            _lp[_s] = float(_it.get("price") or 0)
+                        except (TypeError, ValueError):
+                            pass
+                if len(_items) < 100:
+                    break
+                _off += 100
+            oos_pending = [(i2, s2, (p2 if p2 else _lp.get(s2))) for i2, s2, p2 in oos_pending]
+            _skipped = sum(1 for _, _, p in oos_pending if not p)
+            if _skipped:
+                logger.info("OOS pass: %d row(s) skipped - no usable price on row or listing", _skipped)
+            oos_pending = [t for t in oos_pending if t[2]]
         oos_done = oos_bounced = 0
         now_oos = datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
         oos_updates = []
