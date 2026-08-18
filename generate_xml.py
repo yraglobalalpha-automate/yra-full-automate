@@ -95,6 +95,14 @@ FETCH_FAILURE_ALERT_THRESHOLD = 3
 PK_TZ = ZoneInfo("Asia/Karachi")
 
 
+class _SkipPushNoPrice(Exception):
+    """Control-flow sentinel: an already-created row with no usable selling
+    price must never push - OnBuy accepts a price-0 update and then
+    auto-suspends the listing (their support logs showed us doing exactly
+    this on dead-source rows, 2026-08-18). The OOS pass zeroes such rows
+    via the listing price fallback instead."""
+
+
 class _SkipPushDead(Exception):
     """Control-flow sentinel: a row whose eBay listing is gone and that was
     never created on OnBuy has nothing to create - see the raise site."""
@@ -894,6 +902,7 @@ def main():
     onbuy_brand_blocked = 0  # brand owned by another seller - flagged, kept (2026-08-03)
     onbuy_deferred = 0  # created earlier, listing not yet updatable on OnBuy's side
     onbuy_suspended_locked = 0  # listing suspended on OnBuy - edits rejected until reactivation
+    onbuy_no_price = 0  # already-created rows with no usable price - push skipped (never send price 0)
     onbuy_postponed = 0  # transient OnBuy/transport trouble - status left untouched, retried next run
     onbuy_skipped_dead = 0  # eBay listing gone + never created on OnBuy - nothing to create (2026-08-06)
     onbuy_needs_category = 0  # refusals awaiting a Category cell - a worklist, not failures (2026-08-06)
@@ -983,31 +992,48 @@ def main():
         oos_done = oos_bounced = 0
         now_oos = datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
         oos_updates = []
-        for idx, sku, price in oos_pending:
-            if onbuy_pushes_this_run >= ONBUY_MAX_PUSHES_PER_RUN or onbuy_halt_reason is not None:
+        # Batched like the activation pass (one call per 500 SKUs). Per-item
+        # errors (hidden/suspended listings rejecting the update) stamp the
+        # row so it does not monopolise this pass; it re-enters if a later
+        # refresh changes its state again.
+        for c0 in range(0, len(oos_pending), 500):
+            if onbuy_halt_reason is not None:
                 break
+            chunk = oos_pending[c0:c0 + 500]
             onbuy_pushes_this_run += 1
-            i = idx + 2
             try:
-                onbuy.update_listing(sku=sku, price=price, stock=0)
-                oos_done += 1
-                if "Last OnBuy Sync" in col_map:
-                    oos_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_oos]]})
+                results = onbuy.update_listings_by_sku_batch(
+                    [(sku, price, 0) for _idx, sku, price in chunk])
             except (TransientError, AuthError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
-                logger.warning("OOS push postponed for SKU %s: %s", sku, exc)
+                logger.warning("OOS batch postponed: %s", exc)
                 if isinstance(exc, AuthError):
                     run_had_errors = True
                 if isinstance(exc, (RateLimitError, AuthError)):
                     onbuy_halt_reason = str(exc)[:200]
+                continue
             except Exception as exc:
-                # Hidden/suspended listings reject the update - stamp so the
-                # row doesn't monopolise this pass every run; it re-enters
-                # if a later refresh changes its state again.
-                oos_bounced += 1
-                logger.info("OOS push bounced for SKU %s (%s) - stamped", sku, str(exc)[:120])
-                if "Last OnBuy Sync" in col_map:
-                    oos_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_oos]]})
-            time.sleep(0.5)
+                logger.warning("OOS batch failed outright: %s", str(exc)[:200])
+                continue
+            outcome = {}
+            for it in results:
+                it = it or {}
+                s = str(it.get("sku") or "").strip()
+                if s:
+                    outcome[s] = str(it.get("error") or "").strip()
+            for idx, sku, _price in chunk:
+                i = idx + 2
+                err = outcome.get(sku, "")
+                if sku in outcome and not err:
+                    oos_done += 1
+                    if "Last OnBuy Sync" in col_map:
+                        oos_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_oos]]})
+                else:
+                    oos_bounced += 1
+                    if err:
+                        logger.info("OOS push bounced for SKU %s (%s) - stamped", sku, err[:120])
+                    if "Last OnBuy Sync" in col_map:
+                        oos_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_oos]]})
+            time.sleep(1.0)
         if oos_updates:
             try:
                 with_retry(lambda: sheet.batch_update(
@@ -1061,44 +1087,59 @@ def main():
         activation_updates = []
         activated = act_bounced = act_waiting = 0
         now_act = datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        # The pass never takes more than half the run's push budget, so a
-        # large never-synced backlog drains over a few runs without starving
-        # the main loop's creates/updates.
-        act_cap = max(1, ONBUY_MAX_PUSHES_PER_RUN // 2)
-        for idx, sku, a_price, a_stock, _ in pending_activation:
-            if onbuy_pushes_this_run >= act_cap or onbuy_halt_reason is not None:
+        # Batched per OnBuy support's own recommendation (2026-08-18): up to
+        # 1,000 SKUs per PUT /v2/listings/by-sku request, answered 200 with
+        # per-item errors inline. One chunk costs ONE call against the hourly
+        # quota, so the whole pool fits in every run and the old half-budget
+        # slot cap is obsolete. "SKU does not exist" items stay pending (no
+        # stamp) - the queue hasn't made them addressable; genuinely rejected
+        # rows drop out when the hourly backfill rewrites their status.
+        for c0 in range(0, len(pending_activation), 500):
+            if onbuy_halt_reason is not None:
                 break
+            chunk = pending_activation[c0:c0 + 500]
             onbuy_pushes_this_run += 1
-            i = idx + 2
             try:
-                onbuy.update_listing(sku=sku, price=a_price, stock=a_stock)
-                activated += 1
-                if "Sync Status" in col_map:
-                    activation_updates.append({"range": f"{col_letter(col_map['Sync Status'])}{i}", "values": [["Synced"]]})
-                if "Last OnBuy Sync" in col_map:
-                    activation_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_act]]})
-                if "OnBuy Listing Active" in col_map:
-                    activation_updates.append({"range": f"{col_letter(col_map['OnBuy Listing Active'])}{i}", "values": [["TRUE"]]})
+                results = onbuy.update_listings_by_sku_batch(
+                    [(sku, a_price, a_stock) for _idx, sku, a_price, a_stock, _t in chunk])
             except (TransientError, AuthError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
-                logger.warning("Activation postponed for SKU %s: %s", sku, exc)
+                logger.warning("Activation batch postponed: %s", exc)
                 if isinstance(exc, AuthError):
                     run_had_errors = True
                 if isinstance(exc, (RateLimitError, AuthError)):
                     onbuy_halt_reason = str(exc)[:200]
+                continue
             except Exception as exc:
-                if "sku does not exist" in str(exc).lower():
-                    # OnBuy's queue hasn't made the SKU addressable yet - leave
-                    # the row pending (no stamp) so the next run's pass retries
-                    # it. Genuinely rejected products drop out when the hourly
-                    # backfill rewrites their status.
+                logger.warning("Activation batch failed outright: %s", str(exc)[:200])
+                continue
+            outcome = {}
+            for it in results:
+                it = it or {}
+                s = str(it.get("sku") or "").strip()
+                if s:
+                    outcome[s] = str(it.get("error") or "").strip()
+            for idx, sku, _p, _s2, _t in chunk:
+                i = idx + 2
+                if sku not in outcome:
                     act_waiting += 1
-                    logger.info("Activation waiting for SKU %s (not yet addressable) - retry next run", sku)
-                else:
-                    act_bounced += 1
-                    logger.info("Activation bounced for SKU %s (%s) - stamped back to rotation", sku, str(exc)[:120])
+                    continue
+                err = outcome[sku]
+                if not err:
+                    activated += 1
+                    if "Sync Status" in col_map:
+                        activation_updates.append({"range": f"{col_letter(col_map['Sync Status'])}{i}", "values": [["Synced"]]})
                     if "Last OnBuy Sync" in col_map:
                         activation_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_act]]})
-            time.sleep(0.5)
+                    if "OnBuy Listing Active" in col_map:
+                        activation_updates.append({"range": f"{col_letter(col_map['OnBuy Listing Active'])}{i}", "values": [["TRUE"]]})
+                elif "sku does not exist" in err.lower():
+                    act_waiting += 1
+                else:
+                    act_bounced += 1
+                    logger.info("Activation bounced for SKU %s (%s) - stamped back to rotation", sku, err[:120])
+                    if "Last OnBuy Sync" in col_map:
+                        activation_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_act]]})
+            time.sleep(1.0)
         if activation_updates:
             try:
                 with_retry(lambda: sheet.batch_update(
@@ -1431,6 +1472,8 @@ def main():
                     # so already-created rows are unaffected.
                     raise PermanentError("no matching OnBuy category - fill in the Category column and it will retry")
                 if already_created:
+                    if selling_price <= 0:
+                        raise _SkipPushNoPrice()
                     result = onbuy.update_listing(sku=sku, price=selling_price, stock=stock)
                     action = "updated"
                 else:
@@ -1475,6 +1518,11 @@ def main():
                     sync_status = "Synced"
                     onbuy_product_created = "TRUE"
                     onbuy_listing_active = "TRUE"
+            except _SkipPushNoPrice:
+                onbuy_no_price += 1
+                logger.info(
+                    "Row %d (SKU %s): no usable selling price - push skipped, not failed "
+                    "(the OOS pass zeroes stock with the listing price)", i, sku)
             except _SkipPushDead:
                 onbuy_skipped_dead += 1
                 sync_status = "Skipped: eBay listing unavailable - replace or remove the link"
@@ -1805,9 +1853,9 @@ def main():
     logger.info("Updated rows: %d", updated_count)
     logger.info("OnBuy: %d created, %d updated, %d deferred (awaiting go-live), %d postponed (transient), "
                  "%d failed, %d removed (brand rejected), %d brand-blocked (flagged), %d skipped (dead eBay link), "
-                 "%d awaiting category (worklist), %d suspended-locked",
+                 "%d awaiting category (worklist), %d suspended-locked, %d no-price skipped",
                  onbuy_created, onbuy_updated, onbuy_deferred, onbuy_postponed, onbuy_failed, onbuy_removed,
-                 onbuy_brand_blocked, onbuy_skipped_dead, onbuy_needs_category, onbuy_suspended_locked)
+                 onbuy_brand_blocked, onbuy_skipped_dead, onbuy_needs_category, onbuy_suspended_locked, onbuy_no_price)
     if onbuy_halt_reason:
         logger.warning("OnBuy pushes were halted early this run: %s", onbuy_halt_reason)
     logger.info("Feed products: %d, skipped: %d", feed_count, skipped_feed)

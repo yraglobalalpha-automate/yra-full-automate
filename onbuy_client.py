@@ -179,6 +179,35 @@ class OnBuyClient:
 
         return with_retry(_do_update, what=f"onbuy update_listing({sku})", max_attempts=3)
 
+
+    def update_listings_by_sku_batch(self, listings):
+        """PUT /v2/listings/by-sku with up to 1,000 SKUs per request - OnBuy
+        support's own recommendation (2026-08-18) for reliable processing.
+        `listings` is [(sku, price, stock), ...]. Returns the raw per-item
+        result list; callers handle each item's optional "error" field (this
+        endpoint answers 200 with per-item errors inline, so an all-or-
+        nothing raise would hide partial success)."""
+        payload = {
+            "site_id": self.site_id,
+            "seller_id": self.seller_id,
+            "listings": [{"sku": s, "price": p, "stock": st, "boost_marketing_commission": 0}
+                         for s, p, st in listings],
+        }
+
+        def _do_batch():
+            logger.info("OnBuy update_listings_by_sku_batch: %d SKU(s)", len(payload["listings"]))
+            resp = self._send("PUT", f"{BASE_URL}/listings/by-sku",
+                              what=f"onbuy update_listings_by_sku_batch({len(payload['listings'])})",
+                              json=payload, timeout=120)
+            logger.info("OnBuy update_listings_by_sku_batch raw response [%s]: %s",
+                        resp.status_code, resp.text[:3000])
+            raise_for_status(resp, what="onbuy update_listings_by_sku_batch")
+            body = resp.json()
+            results = body.get("results") if isinstance(body, dict) else body
+            return results if isinstance(results, list) else []
+
+        return with_retry(_do_batch, what="onbuy update_listings_by_sku_batch", max_attempts=3)
+
     def create_listings_batch(self, listings):
         """POST /v2/listings - attach seller offers to EXISTING catalogue
         products by OPC ({"opc","sku","condition","price","stock"} each).
