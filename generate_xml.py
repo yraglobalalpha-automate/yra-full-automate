@@ -1605,6 +1605,12 @@ def main():
                     logger.info(
                         "Row %d (SKU %s): listing suspended on OnBuy - edits rejected until "
                         "reactivation, will keep retrying on rotation", i, sku)
+                elif "no usable product image" in str(exc):
+                    # Same worklist treatment as the category case: a human
+                    # fixes the source images; the run stays green.
+                    onbuy_needs_category += 1
+                    sync_status = f"Failed: {str(exc)[:300]}"
+                    logger.warning("SKU %s needs working images before it can list: %s", sku, exc)
                 elif "no matching OnBuy category" in str(exc):
                     # A product waiting for its Category cell is a WORKLIST
                     # item, not a system failure (2026-08-06): with a growing
