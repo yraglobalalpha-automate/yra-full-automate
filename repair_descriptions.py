@@ -32,7 +32,18 @@ MAX_PRODUCTS = int(os.getenv("MAX_PRODUCTS") or "1000")
 CHUNK = int(os.getenv("CHUNK") or "50")
 
 _JUNK_MARKERS = ("eselt", "ebay", "send us a message", "seller profile",
-                 "30 calendar days", "next working day shipping")
+                 "30 calendar days", "next working day shipping",
+                 # retail description templates (2026-08-20 sweep)
+                 "buy it direct", "appliances direct", "laptops direct",
+                 "shop all", "your browser does not support", "huge discounts",
+                 "sister brands", "safe & secure shopping", "want it sooner")
+
+# Marked-only mode (default ON for the 2026-08-20 fleet sweep): only rows
+# whose RAW description carries a junk marker are pushed - template junk
+# originates in the SOURCE listing and persists there, so the marker on the
+# refetched sheet copy reliably identifies products whose OnBuy copy needs
+# the re-push. Keeps the products-queue load proportional to real damage.
+SELECT_MARKED = (os.getenv("SELECT_MARKED") or "1").strip().lower() not in ("0", "no", "false")
 
 
 def fetch_all_rows():
@@ -66,8 +77,11 @@ def main():
         if not clean.strip():
             skipped_empty += 1
             continue
-        if any(m in raw.lower() for m in _JUNK_MARKERS):
+        marked = any(m in raw.lower() for m in _JUNK_MARKERS)
+        if marked:
             had_junk += 1
+        if SELECT_MARKED and not marked:
+            continue
         updates.append({"opc": opc, "description": clean,
                         "_sku": str(r.get("SKU") or "")})
 
