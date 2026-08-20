@@ -48,7 +48,7 @@ _TEMPLATE_JUNK_PATTERNS = [
     r"Created with Eselt[\w ,'&-]*",
     r"Mobile Templates? for eBay Sellers?",
     r"Send us a message",
-    r"Our Store",
+    r"Our Store\b",
     r"Seller Profile",
     r"Check Our Feedback",
     r"Items for sale\b",
@@ -75,6 +75,83 @@ _TEMPLATE_JUNK_PATTERNS = [
     r"[^.!?\n<>]*\beBay\b[^.!?\n<>]*[.!?]?",
 ]
 _TEMPLATE_JUNK_RE = re.compile("(?i)" + "|".join(_TEMPLATE_JUNK_PATTERNS))
+
+# ---- big-retailer description templates (Buy It Direct family etc.), ----
+# 2026-08-20: whole shop navigation menus, carousel counters and brand-story
+# sections arrive as text inside scraped descriptions (user-reported, kitchen
+# tap example). Sentence junk here; the nav-menu bullet runs are handled
+# structurally in sanitize_description because the item texts themselves
+# ("Laptops", "Monitors") are too generic to blocklist safely.
+_RETAIL_TEMPLATE_PATTERNS = [
+    r"Your browser does not support the video tag\.?",
+    r"\b\d+ of(?:\s+\d+){2,}",
+    r"\bof(?:\s+\d+){3,}",          # carousel counters: "1 of 1 2 3 ..."
+    r"Huge Discounts",
+    r"Quality Products\s*Menu",
+    r"Ask a question",
+    r"Similar items",
+    r"View more\b",
+    r"View User Manual\s*\S{0,3}",
+    r"Shop now\b",
+    r"Shop [Aa]ll(?:\s+[A-Z&][\w&' -]{0,30})?",
+    r"Browse All\b",
+    r"Top Brands\b",
+    r"New Arrivals\b",
+    r"Ending Soon\b",
+    r"\bShop similar items\b",
+    r"We stock all the top brands",
+    r"Want it sooner\??",
+    r"SAFE\s*&(?:amp;)?\s*SECURE\s*SHOPPING",
+    r"Recommended Accessories",
+    r"RRP\s*£?[\d,.]+(?:\s*£[\d,.]+)?",
+    r"About Buy It Direct[\s\S]{0,1200}?(?:something amazing\.?|$)",
+    r"We built our business[^.!?]*[.!?]",
+    r"[^.!?\n<>]*sister brands?[^.!?\n<>]*[.!?]?",
+    r"[^.!?\n<>]*one of the UK'?s largest online retailers[^.!?\n<>]*[.!?]?",
+    r"Come on, let'?s find something amazing\.?",
+    r"Most products come with a manufacturer'?s warranty[^.!?]*[.!?]",
+    r"They will arrange your repair or exchange[^.!?]*[.!?]",
+    r"If something goes wrong\b",
+    r"But, in the rare event that something gets lost or damaged[^.!?]*[.!?]",
+    r"Please share as much information as possible[^.!?]*[.!?]",
+    r"This does not include viruses, malware[^.!?]*[.!?]",
+]
+_RETAIL_TEMPLATE_RE = re.compile("(?i)" + "|".join(_RETAIL_TEMPLATE_PATTERNS))
+
+# A run of MENU_RUN or more consecutive short list items - each at most four
+# words, no digits, no colon - is a shop navigation menu, never a spec list
+# (real feature bullets are long or carry digits/colons).
+_LI_RE = re.compile(r"<li>\s*(.*?)\s*</li>", re.I | re.S)
+_MENU_RUN = 5
+
+
+def _strip_nav_menus(html):
+    items = list(_LI_RE.finditer(html))
+    if len(items) < _MENU_RUN:
+        return html
+    def is_navish(text):
+        t = re.sub(r"<[^>]+>", " ", text).strip()
+        return bool(t) and len(t.split()) <= 4 and not re.search(r"[\d:]", t)
+    doomed = set()
+    run = []
+    for m in items:
+        if is_navish(m.group(1)):
+            run.append(m)
+        else:
+            if len(run) >= _MENU_RUN:
+                doomed.update(id(x) for x in run)
+            run = []
+    if len(run) >= _MENU_RUN:
+        doomed.update(id(x) for x in run)
+    if not doomed:
+        return html
+    out, last = [], 0
+    for m in items:
+        if id(m) in doomed:
+            out.append(html[last:m.start()])
+            last = m.end()
+    out.append(html[last:])
+    return "".join(out)
 
 # ---- spec-only policy (user rule 2026-08-01): descriptions may contain ----
 # product specification and nothing else. Any sentence touching a seller
@@ -144,7 +221,9 @@ def sanitize_description(html, limit=45000):
 
     # Remove seller-boilerplate sentences the tag-level cleaning can't catch
     # since they're plain text, not markup.
+    cleaned = _strip_nav_menus(cleaned)
     cleaned = _NOISE_RE.sub("", cleaned)
+    cleaned = _RETAIL_TEMPLATE_RE.sub("", cleaned)
     # Topic rule FIRST so whole seller sentences die intact; the phrase
     # blocklist then only mops up non-sentence banner fragments.
     cleaned = _SELLER_TOPIC_RE.sub("", cleaned)

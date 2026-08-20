@@ -157,6 +157,20 @@ TITLE_PHRASE_CATEGORIES = (
     (("led", "tv"), "Electronics & Technology > TV & Audio > TVs & Accessories > TVs"),
     (("oled", "tv"), "Electronics & Technology > TV & Audio > TVs & Accessories > TVs"),
     (("qled", "tv"), "Electronics & Technology > TV & Audio > TVs & Accessories > TVs"),
+    # 2026-08-20: hundreds of manual categorisations on a sibling store were
+    # phones/laptops/taps the scorer refused - one phrase each covers them.
+    (("smartphone",), "Electronics & Technology > Mobile & Smart Tech > Mobile Phones & Accessories > Mobile Phones"),
+    (("smart", "phone"), "Electronics & Technology > Mobile & Smart Tech > Mobile Phones & Accessories > Mobile Phones"),
+    (("mobile", "phone"), "Electronics & Technology > Mobile & Smart Tech > Mobile Phones & Accessories > Mobile Phones"),
+    (("laptop",), "Electronics & Technology > Computing & Gaming > Laptops, MacBooks & Accessories > Laptops"),
+    (("tablet",), "Electronics & Technology > Computing & Gaming > iPads, Tablets & eBook Readers > Tablets"),
+    (("kitchen", "tap"), "Tools & DIY > Kitchen & Bathroom Fixtures > Kitchen Fixtures > Kitchen Taps"),
+    (("kitchen", "mixer", "tap"), "Tools & DIY > Kitchen & Bathroom Fixtures > Kitchen Fixtures > Kitchen Taps"),
+    (("mixer", "tap"), "Tools & DIY > Kitchen & Bathroom Fixtures > Kitchen Fixtures > Kitchen Taps"),
+    (("basin", "tap"), "Tools & DIY > Kitchen & Bathroom Fixtures > Bathroom Fixtures > Bathroom Sink Taps"),
+    (("bath", "tap"), "Tools & DIY > Kitchen & Bathroom Fixtures > Bathroom Fixtures > Bath & Shower Taps"),
+    (("shower", "tap"), "Tools & DIY > Kitchen & Bathroom Fixtures > Bathroom Fixtures > Bath & Shower Taps"),
+    (("garden", "tap"), "Home & Garden > Garden & Outdoor Living > Garden Watering & Irrigation Supplies > Garden Taps"),
 )
 
 
@@ -169,6 +183,9 @@ TITLE_PHRASE_VETO = {
     "remote", "control", "bracket", "mount", "stand", "strip", "light",
     "backlight", "sticker", "cover", "case", "protector", "cable", "box",
     "projector", "soundbar", "aerial", "antenna",
+    # phones/laptops/tablets/taps accessory words (2026-08-20)
+    "bag", "sleeve", "charger", "adapter", "holder", "battery", "keyboard",
+    "stylus", "pen", "washer", "cartridge", "aerator", "hose", "connector",
 }
 
 
