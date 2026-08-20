@@ -17,7 +17,9 @@ def _result(title, description=JUNK):
 def test_tablet_title_matches_tablets_leaf():
     result, stage = _result(
         "2025 NEW 12S PRO Wifi Tablet Android 15 PC 8GB+64GB Tablets 10.1 Inch 6000mAh")
-    assert stage == "leaf-in-title"
+    # The 2026-08-20 phrase rule now catches tablets a stage earlier than
+    # the leaf-in-title fallback this test originally pinned.
+    assert stage == "title-phrase"
     assert result.endswith("> Tablets")
 
 
