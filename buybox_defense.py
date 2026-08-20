@@ -97,6 +97,19 @@ def main():
     rows = comp.get_all_records()
     print(f"competition rows: {len(rows)} | sheet rows with cost: {len(cost_by_sku)}")
 
+    stat_counts = {}
+    wp_pop = pr_pop = 0
+    for r in rows:
+        if not str(r.get("sku") or "").strip():
+            continue
+        k = str(r.get("winning_status") or "").strip() or "(blank)"
+        stat_counts[k] = stat_counts.get(k, 0) + 1
+        if to_f(r.get("winning_price")):
+            wp_pop += 1
+        if to_f(r.get("price")):
+            pr_pop += 1
+    print(f"export health: winning_status={stat_counts} | winning_price populated={wp_pop} | our price populated={pr_pop}")
+
     whatif_held = []
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     decisions = []   # (comp_rownum, action, new_price, floor)
