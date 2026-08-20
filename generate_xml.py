@@ -630,7 +630,10 @@ def main():
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    sheet = client.open("YRA_Full_Feed_Master").sheet1
+    # Google's API throws intermittent 503s (5 crashed runs in the week of
+    # 2026-08-18) - one retry cycle rides them out.
+    sheet = with_retry(lambda: client.open("YRA_Full_Feed_Master").sheet1,
+                       what="sheet open", max_attempts=3)
 
     # Header hygiene BEFORE reading the data: one stray space typed into a
     # header cell ("SKU ") makes that whole column unreadable - row.get("SKU")
@@ -659,7 +662,8 @@ def main():
         notify.send_alert_email("Sheet header row needs fixing", message)
         sys.exit(1)
 
-    data = sheet.get_all_records()
+    data = with_retry(lambda: sheet.get_all_records(),
+                      what="sheet read", max_attempts=3)
     # Same hygiene on the row dicts (their keys come from the header row).
     data = [{str(k).strip(): v for k, v in row.items()} for row in data]
 
@@ -1463,6 +1467,13 @@ def main():
                     # or is replaced. (Costs one push slot of the per-run
                     # cap - not worth restructuring the loop over.)
                     raise _SkipPushDead()
+                if not already_created and not str(main_image or "").strip():
+                    # OnBuy 400s a create whose default_image is empty (all
+                    # source images dead/rejected - 3 cases this week). A
+                    # data problem for a human, not a system fault: flag the
+                    # row and keep the run green; it retries the moment the
+                    # source gets working images.
+                    raise PermanentError("no usable product image - fix the source images or replace the link")
                 if not already_created and category_id is None:
                     # A create can't succeed without a category (OnBuy 400s
                     # on a null category_id), and the matcher now refuses to
