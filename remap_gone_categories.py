@@ -23,39 +23,53 @@ MARK_FAILED = {s.strip() for s in (os.getenv("MARK_FAILED_SKUS") or "").split(",
 FAILED_TEXT = "Failed: Category is not a lowest level category (OnBuy tree change) - category remapped, resubmitting"
 
 L = "Home & Garden > Furniture, Furnishings & Decor > Lighting"
-# gone id -> (gone path, [(regex on title, new id, new path)...], (fallback id, fallback path))
+O = "Home & Garden > Garden & Outdoor Living > Outdoor Lighting"
+# Title rules checked FIRST for every retired id (order matters): the retired
+# parents were catch-alls, so many rows are not really "lamps"/"ceiling lights".
+GLOBAL_RULES = [
+    (r"car (dash|bulb|instrument)|capless|w5w|\bt5\b|\bt10\b|h4 |h7 ", "10725", "Cars & Automotive > Car Parts > Car Lights, Bulbs & Indicators > Car Bulbs & LEDs"),
+    (r"grow light|hydroponic|plant light|full spectrum", "14108", "Home & Garden > Garden & Outdoor Living > Hydroponics & Seed Starting > Grow Lights, Bulbs & Fixtures"),
+    (r"\bbulbs?\b|gu10|\be27\b|\be14\b|\bb22\b|\bes\b|\bses\b|\bbc\b|filament", "38250", "Appliances > Furniture, Furnishings & Decor > Lighting > Light Bulbs"),
+    (r"street light|flood ?light|security light|solar (power(ed)? )?(pir|motion|led|wall|garden|outdoor|street)|outdoor.*(solar|security|flood)|solar.*(outdoor|garden|security|flood)", "9658", f"{O} > Outdoor Security Lights, Floodlights & Spotlights"),
+    (r"outdoor wall light|garden wall light|fence light|door light|step light|porch light", "9656", f"{O} > Outdoor Wall & Ceiling Lights"),
+    (r"led strip|light strip|light bar|backlight|neon|rope light", "9670", f"{L} > LED Strips"),
+    (r"night light|motion sensor (light|lamp)|pir (light|lamp|sensor)|cabinet light|closet|stair light|wardrobe light|plug-?in", "8036", f"{L} > Night Lights"),
+    (r"nail (lamp|dryer)|uv led nail|gel polish", "10288", "Health & Beauty > Nail Care > Manicure Nail Tools > Manicure & Pedicure Sets"),
+    (r"chandelier", "3485", f"{L} > Ceiling Lights > Chandeliers"),
+    (r"pendant|hanging light|drop light", "3487", f"{L} > Ceiling Lights > Pendant Lights"),
+    (r"spot ?light|downlight|track light", "3484", f"{L} > Ceiling Lights > Ceiling Spotlights"),
+    (r"batten|tube light", "17970", f"{L} > Ceiling Lights > LED Batten Lights"),
+    (r"ceiling fan", "17925", f"{L} > Ceiling Lights > Ceiling Fans"),
+    (r"floor lamp|standing lamp|tripod lamp|arc lamp|corner (floor )?lamp|standing light", "9620", f"{L} > Lamps > Floor Lamps"),
+    (r"wall lamp|wall light|sconce|wall mounted", "17974", f"{L} > Lamps > Wall Lamps"),
+    (r"desk lamp|table lamp|bedside|reading lamp|reading light|magnif", "3475", f"{L} > Lamps > Desk & Table Lamps"),
+    (r"ceiling (light|lamp)|flush mount|garage light|panel light|led panel|hexagon|hex led|work light|shop light", "38245", "Appliances > Furniture, Furnishings & Decor > Lighting > Ceiling Lights"),
+    (r"parasol cover", "14000", "Home & Garden > Garden & Outdoor Living > Parasols, Gazebos & Garden Shade > Parasol Covers"),
+]
+# retired id -> (retired path, fallback (id, path)) - used when no title rule fires
 RULES = {
-    "3472": (f"{L} > Ceiling Lights", [
-        (r"chandelier", "3485", f"{L} > Ceiling Lights > Chandeliers"),
-        (r"pendant|hanging|drop light", "3487", f"{L} > Ceiling Lights > Pendant Lights"),
-        (r"spot ?light|downlight|gu10|track light", "3484", f"{L} > Ceiling Lights > Ceiling Spotlights"),
-        (r"batten|tube light|strip light", "17970", f"{L} > Ceiling Lights > LED Batten Lights"),
-        (r"ceiling fan", "17925", f"{L} > Ceiling Lights > Ceiling Fans"),
-    ], ("38245", "Appliances > Furniture, Furnishings & Decor > Lighting > Ceiling Lights")),
-    "13705": (f"{L} > Lamps", [
-        (r"floor lamp|standing lamp|tripod lamp|arc lamp", "9620", f"{L} > Lamps > Floor Lamps"),
-        (r"wall lamp|wall light|sconce", "17974", f"{L} > Lamps > Wall Lamps"),
-    ], ("3475", f"{L} > Lamps > Desk & Table Lamps")),
-    "3463": (f"{L} > Light Bulbs", [],
-             ("38250", "Appliances > Furniture, Furnishings & Decor > Lighting > Light Bulbs")),
-    "25994": ("Electronics & Technology > TV & Audio > Speakers & Sound Systems > Soundbases", [],
+    "3472": (f"{L} > Ceiling Lights", ("38245", "Appliances > Furniture, Furnishings & Decor > Lighting > Ceiling Lights")),
+    "13705": (f"{L} > Lamps", ("3475", f"{L} > Lamps > Desk & Table Lamps")),
+    "3463": (f"{L} > Light Bulbs", ("38250", "Appliances > Furniture, Furnishings & Decor > Lighting > Light Bulbs")),
+    "25994": ("Electronics & Technology > TV & Audio > Speakers & Sound Systems > Soundbases",
               ("3238", "Electronics & Technology > TV & Audio > Speakers & Sound Systems > Soundbars")),
-    "31571": ("Home & Garden > Garden & Outdoor Living > Parasols, Gazebos & Garden Shade > Parasol Parts & Accessories", [
-        (r"cover", "14000", "Home & Garden > Garden & Outdoor Living > Parasols, Gazebos & Garden Shade > Parasol Covers"),
-    ], ("18085", "Home & Garden > Garden & Outdoor Living > Parasols, Gazebos & Garden Shade > Parasol Parts")),
-    "11345": ("Toys & Games > Hobby Toys & Games > Wargaming & Role-Playing Games > Historical Wargaming", [],
+    "31571": ("Home & Garden > Garden & Outdoor Living > Parasols, Gazebos & Garden Shade > Parasol Parts & Accessories",
+              ("18085", "Home & Garden > Garden & Outdoor Living > Parasols, Gazebos & Garden Shade > Parasol Parts")),
+    "11345": ("Toys & Games > Hobby Toys & Games > Wargaming & Role-Playing Games > Historical Wargaming",
               ("11344", "Toys & Games > Hobby Toys & Games > Wargaming & Role-Playing Games > Wargaming Role Playing Games & Figures")),
 }
 GONE_PATHS = {v[0].lower(): k for k, v in RULES.items()}
 
 
 def choose(gone_id, title):
-    _, rules, fallback = RULES[gone_id]
     t = (title or "").lower()
-    for rx, nid, npath in rules:
-        if re.search(rx, t):
-            return nid, npath
-    return fallback
+    if gone_id in ("3472", "13705", "3463"):
+        for rx, nid, npath in GLOBAL_RULES:
+            if re.search(rx, t):
+                return nid, npath
+    elif gone_id == "31571" and "cover" in t:
+        return "14000", "Home & Garden > Garden & Outdoor Living > Parasols, Gazebos & Garden Shade > Parasol Covers"
+    return RULES[gone_id][1]
 
 
 def col_letter(idx):
