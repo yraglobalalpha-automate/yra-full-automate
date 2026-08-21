@@ -43,6 +43,25 @@ DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "fals
 DEFENSE_MULT = float(os.getenv("DEFENSE_MULT") or "1.35")
 
 
+def _load_protected():
+    """protected_skus.txt (content-shift incident 2026-08-21): listings whose
+    OnBuy page shows another product and are stock-zeroed pending repair. A
+    stale export could show them winning/losing with stock - never reprice
+    or re-stock them from here."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protected_skus.txt")
+    out = set()
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.split("#", 1)[0].strip()
+                if line:
+                    out.add(line)
+    return out
+
+
+PROTECTED_SKUS = _load_protected()
+
+
 def floor_price(cost, shipping):
     """Defense-only floor (user-approved 2026-08-19): 20% OnBuy fee + 15%
     profit = x1.35 over cost+shipping. Applies ONLY inside this engine and
@@ -114,11 +133,15 @@ def main():
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     decisions = []   # (comp_rownum, action, new_price, floor)
     repricers = []   # (sku, new_price, stock)
-    held = no_cost = winning = reprice = 0
+    held = no_cost = winning = reprice = protected = 0
     for i, r in enumerate(rows):
         rownum = i + 2
         sku = str(r.get("sku") or "").strip()
         if not sku:
+            continue
+        if sku in PROTECTED_SKUS:
+            protected += 1
+            decisions.append((rownum, "PROTECTED", "", ""))
             continue
         status = str(r.get("winning_status") or "").strip()
         our = to_f(r.get("price"))
@@ -150,7 +173,7 @@ def main():
             decisions.append((rownum, "HELD", "", f"{floor:.2f}"))
             whatif_held.append((sku, our, win, cost, ship))
 
-    print(f"winning/no-action: {winning} | reprice: {reprice} | held (floor): {held} | no cost basis: {no_cost}")
+    print(f"winning/no-action: {winning} | reprice: {reprice} | held (floor): {held} | no cost basis: {no_cost} | protected (skipped): {protected}")
     whatif = to_f(os.getenv("WHATIF_MULT") or "")
     if whatif and whatif_held:
         # How many currently-held pages become winnable if the floor were
