@@ -61,7 +61,8 @@ def main():
             it = it or {}
             sku = str(it.get("sku") or "").strip()
             if sku:
-                listings[sku] = str(it.get(name_key) or "").strip()
+                listings[sku] = (str(it.get(name_key) or "").strip(),
+                                 str(it.get("created_at") or "")[:16])
         if len(items) < limit:
             break
         offset += limit
@@ -84,21 +85,35 @@ def main():
         if not title:
             no_title += 1
             continue
-        lname = listings[sku]
+        lname, lcreated = listings[sku]
         if similar(lname, title) >= 0.5:
             matched += 1
             continue
         mismatched += 1
-        above = str(rows[i - 1].get("Title") or "").strip() if i else ""
-        from_above = bool(above) and similar(lname, above) >= 0.5
-        mismatches.append((i + 2, sku, lname[:60], title[:60], from_above))
+        # Which neighbouring row does OnBuy's name belong to? +1 = the row
+        # BELOW (GTV 2026-08-21 pattern), -1 = the row ABOVE (YRA 2026-08-14
+        # pattern); no neighbour within 3 rows = barcode collision on a
+        # foreign/shared catalogue product (report-only, delist+relist).
+        offset = None
+        for k in (1, -1, 2, -2, 3, -3):
+            j = i + k
+            if 0 <= j < len(rows):
+                nt = str(rows[j].get("Title") or "").strip()
+                if nt and similar(lname, nt) >= 0.5:
+                    offset = k
+                    break
+        mismatches.append((i + 2, sku, lname[:60], title[:60], offset, lcreated))
 
     print(f"sheet rows with live listing + title: {matched + mismatched} "
           f"({no_title} rows without title yet, {not_listed} rows with no live listing)")
-    print(f"MATCHED: {matched} | MISMATCHED: {mismatched} "
-          f"| of which matching the ROW-ABOVE title: {sum(1 for m in mismatches if m[4])}")
-    for m in mismatches[:10]:
-        print(f"  row {m[0]} SKU {m[1]} above={m[4]}\n    onbuy: {m[2]}\n    sheet: {m[3]}")
+    kinds = {}
+    for m in mismatches:
+        k = "collision" if m[4] is None else f"shift{m[4]:+d}"
+        kinds[k] = kinds.get(k, 0) + 1
+    print(f"MATCHED: {matched} | MISMATCHED: {mismatched} | kinds: {kinds}")
+    for m in mismatches:
+        k = "collision" if m[4] is None else f"shift{m[4]:+d}"
+        print(f"MM|{m[0]}|{m[1]}|{k}|{m[5]}|onbuy={m[2]}|sheet={m[3]}")
     if mismatches:
         rownums = [m[0] for m in mismatches]
         print(f"mismatch row range: {min(rownums)}..{max(rownums)}")
