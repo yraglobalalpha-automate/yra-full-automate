@@ -1,0 +1,31 @@
+name: Remap Gone Categories
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "yes = list rows only; no = write Category/Category ID (and Failed status for mark_failed_skus)"
+        required: false
+        default: "yes"
+      mark_failed_skus:
+        description: "Comma-separated SKUs whose creation is KNOWN to have failed on the category - flip to Failed so they resubmit"
+        required: false
+        default: ""
+
+jobs:
+  remap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Remap
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+          MARK_FAILED_SKUS: ${{ inputs.mark_failed_skus }}
+        run: python remap_gone_categories.py
