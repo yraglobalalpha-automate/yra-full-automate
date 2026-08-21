@@ -43,7 +43,7 @@ TIER1 = [
     (r"batten|tube light", r"floor", "17970", f"{L} > Ceiling Lights > LED Batten Lights"),
     (r"spot ?light|downlight|track light", r"wall (lamp|light)", "3484", f"{L} > Ceiling Lights > Ceiling Spotlights"),
     (r"floor.{0,12}lamp|standing (lamp|light)|tripod lamp|arc lamp|corner.{0,12}lamp", None, "9620", f"{L} > Lamps > Floor Lamps"),
-    (r"wall (lamp|light)|sconce", r"ceiling", "17974", f"{L} > Lamps > Wall Lamps"),
+    (r"wall (lamp|light)|sconce", r"ceiling|hexagon|hex led", "17974", f"{L} > Lamps > Wall Lamps"),
     (r"desk (lamp|light)|table lamp|bedside|magnif", r"floor", "3475", f"{L} > Lamps > Desk & Table Lamps"),
     (r"led strip|light strip|light bar|backlight|neon|rope light", r"ceiling|batten|tube light|floor", "9670", f"{L} > LED Strips"),
     (r"night light|motion sensor (light|lamp)|pir (light|lamp|sensor|motion)|cabinet light|closet|stair light|wardrobe light|plug-?in", None, "8036", f"{L} > Night Lights"),
