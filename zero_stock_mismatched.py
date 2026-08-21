@@ -59,7 +59,8 @@ def main():
             sku = str(it.get("sku") or "").strip()
             if sku:
                 listings[sku] = (str(it.get("name") or "").strip(),
-                                 str(it.get("stock") or "").strip())
+                                 str(it.get("stock") or "").strip(),
+                                 str(it.get("price") or "").strip())
         if len(items) < limit:
             break
         offset += limit
@@ -77,7 +78,7 @@ def main():
         if not sku or sku not in listings:
             continue
         title = str(r.get("Title") or "").strip()
-        lname, lstock = listings[sku]
+        lname, lstock, lprice = listings[sku]
         if not title or similar(lname, title) >= 0.5:
             continue
         # Already at zero (a previous pass got it, or it was empty anyway):
@@ -88,14 +89,31 @@ def main():
                 continue
         except (TypeError, ValueError):
             pass
-        above = str(rows[i - 1].get("Title") or "").strip() if i else ""
-        kind = "shift" if above and similar(lname, above) >= 0.5 else "collision"
+        # Which neighbour does OnBuy's name belong to? +1 = row below (GTV
+        # 2026-08-21), -1 = row above (YRA 2026-08-14); none = collision.
+        kind = "collision"
+        for k in (1, -1, 2, -2, 3, -3):
+            j = i + k
+            if 0 <= j < len(rows):
+                nt = str(rows[j].get("Title") or "").strip()
+                if nt and similar(lname, nt) >= 0.5:
+                    kind = f"shift{k:+d}"
+                    break
         try:
             price = float(r.get("Selling Price (£)") or 0)
         except (TypeError, ValueError):
             price = 0.0
         if price <= 0:
-            price = 0.01
+            # Never push a 0.01 placeholder (price-below-minimum suspensions
+            # we caused ourselves, 2026-08-18): zero with the listing's own
+            # current price, and skip if it has none (0/0 is already inert).
+            try:
+                price = float(lprice or 0)
+            except (TypeError, ValueError):
+                price = 0.0
+            if price <= 0:
+                log.info("SKIP %s (row %d): no usable price on row or listing", sku, i + 2)
+                continue
         targets.append((i + 2, sku, kind, lname, title, price, lstock))
     log.info("mismatched listings to zero: %d", len(targets))
     for t in targets:

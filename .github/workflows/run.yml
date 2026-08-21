@@ -58,6 +58,7 @@ jobs:
           ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
           # Off until explicitly turned on - see the comment block in generate_xml.py.
           ONBUY_API_PUSH_ENABLED: ${{ vars.ONBUY_API_PUSH_ENABLED }}
+          ONBUY_CREATE_ENABLED: ${{ vars.ONBUY_CREATE_ENABLED }}
           ONBUY_API_TEST_SKUS: ${{ vars.ONBUY_API_TEST_SKUS }}
           # Set ONBUY_USE_SANDBOX=true (as a repo Variable) to run the whole
           # pipeline against OnBuy's sandbox account before ever touching

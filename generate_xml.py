@@ -89,10 +89,45 @@ ONBUY_API_TEST_SKUS = {s.strip() for s in os.getenv("ONBUY_API_TEST_SKUS", "").s
 # for their next turn to reach OnBuy.
 ONBUY_MAX_PUSHES_PER_RUN = int(os.getenv("ONBUY_MAX_PUSHES_PER_RUN") or "200")
 
+# Incident guards (2026-08-21, GTV content shift). ONBUY_CREATE_ENABLED=false
+# pauses product CREATES only - price/stock updates keep flowing - while
+# OnBuy's matcher is cross-linking consecutive API creates (listing N ends
+# up on neighbour N+1's product page). protected_skus.txt (repo root, one
+# SKU per line, # comments) lists listings whose OnBuy content is wrong and
+# awaiting repair: their price/stock pushes are skipped in the main loop and
+# the activation pass, so a zero-stocked wrong page cannot be re-armed before
+# the content fix lands. The OOS pass still zeroes them (always safe).
+ONBUY_CREATE_ENABLED = (os.getenv("ONBUY_CREATE_ENABLED") or "true").strip().lower() != "false"
+
+
+def _load_protected_skus():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protected_skus.txt")
+    skus = set()
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.split("#", 1)[0].strip()
+                if line:
+                    skus.add(line)
+    return skus
+
+
+PROTECTED_SKUS = _load_protected_skus()
+
 # How many eBay fetch failures (after retries) in one run before we email an alert.
 FETCH_FAILURE_ALERT_THRESHOLD = 3
 
 PK_TZ = ZoneInfo("Asia/Karachi")
+
+
+class _SkipPushProtected(Exception):
+    """Row's SKU is in protected_skus.txt (OnBuy shows wrong content, repair
+    pending): no price/stock push, no status change (2026-08-21)."""
+
+
+class _SkipCreatePaused(Exception):
+    """Creates are paused (ONBUY_CREATE_ENABLED=false) while OnBuy's matcher
+    cross-links consecutive creates - the row waits untouched (2026-08-21)."""
 
 
 class _SkipPushNoPrice(Exception):
@@ -264,6 +299,11 @@ _NON_BRAND_VALUES = {"branded", "unbranded", "no brand", "none", "n/a", "na", "g
 
 def normalize_brand(brand):
     if str(brand).strip().lower() in _NON_BRAND_VALUES:
+        return "Unbranded"
+    # OnBuy 400s "brand name must be greater than or equal to 2 characters
+    # after processing" (a lone "." from eBay, 2026-08-21): a value with
+    # fewer than 2 letters/digits is not a brand.
+    if len(re.sub(r"[^A-Za-z0-9]", "", str(brand))) < 2:
         return "Unbranded"
     return brand
 
@@ -924,6 +964,8 @@ def main():
     onbuy_deferred = 0  # created earlier, listing not yet updatable on OnBuy's side
     onbuy_suspended_locked = 0  # listing suspended on OnBuy - edits rejected until reactivation
     onbuy_no_price = 0  # already-created rows with no usable price - push skipped (never send price 0)
+    onbuy_protected = 0  # protected_skus.txt rows - push skipped until content repair lands (2026-08-21)
+    onbuy_create_paused = 0  # creates held back by ONBUY_CREATE_ENABLED=false (2026-08-21)
     onbuy_postponed = 0  # transient OnBuy/transport trouble - status left untouched, retried next run
     onbuy_skipped_dead = 0  # eBay listing gone + never created on OnBuy - nothing to create (2026-08-06)
     onbuy_needs_category = 0  # refusals awaiting a Category cell - a worklist, not failures (2026-08-06)
@@ -1091,6 +1133,8 @@ def main():
             if str(row.get("Last OnBuy Sync") or "").strip():
                 continue
             sku = str(row.get("SKU") or "").strip()
+            if sku in PROTECTED_SKUS:
+                continue
             try:
                 a_price = float(row.get("Selling Price (£)") or 0)
                 a_stock = int(float(row.get("Stock") or 0))
@@ -1499,6 +1543,10 @@ def main():
                     # rejection. Price/stock updates don't need a category,
                     # so already-created rows are unaffected.
                     raise PermanentError("no matching OnBuy category - fill in the Category column and it will retry")
+                if sku in PROTECTED_SKUS:
+                    raise _SkipPushProtected()
+                if not already_created and not ONBUY_CREATE_ENABLED:
+                    raise _SkipCreatePaused()
                 if already_created:
                     if selling_price <= 0:
                         raise _SkipPushNoPrice()
@@ -1551,6 +1599,12 @@ def main():
                 logger.info(
                     "Row %d (SKU %s): no usable selling price - push skipped, not failed "
                     "(the OOS pass zeroes stock with the listing price)", i, sku)
+            except _SkipPushProtected:
+                onbuy_protected += 1
+                logger.info("Row %d (SKU %s): PROTECTED - OnBuy content repair pending, push skipped", i, sku)
+            except _SkipCreatePaused:
+                onbuy_create_paused += 1
+                logger.info("Row %d (SKU %s): create PAUSED (ONBUY_CREATE_ENABLED=false) - waiting", i, sku)
             except _SkipPushDead:
                 onbuy_skipped_dead += 1
                 sync_status = "Skipped: eBay listing unavailable - replace or remove the link"
@@ -1887,9 +1941,11 @@ def main():
     logger.info("Updated rows: %d", updated_count)
     logger.info("OnBuy: %d created, %d updated, %d deferred (awaiting go-live), %d postponed (transient), "
                  "%d failed, %d removed (brand rejected), %d brand-blocked (flagged), %d skipped (dead eBay link), "
-                 "%d awaiting category (worklist), %d suspended-locked, %d no-price skipped",
+                 "%d awaiting category (worklist), %d suspended-locked, %d no-price skipped, "
+                 "%d protected (repair pending), %d creates paused",
                  onbuy_created, onbuy_updated, onbuy_deferred, onbuy_postponed, onbuy_failed, onbuy_removed,
-                 onbuy_brand_blocked, onbuy_skipped_dead, onbuy_needs_category, onbuy_suspended_locked, onbuy_no_price)
+                 onbuy_brand_blocked, onbuy_skipped_dead, onbuy_needs_category, onbuy_suspended_locked, onbuy_no_price,
+                 onbuy_protected, onbuy_create_paused)
     if onbuy_halt_reason:
         logger.warning("OnBuy pushes were halted early this run: %s", onbuy_halt_reason)
     logger.info("Feed products: %d, skipped: %d", feed_count, skipped_feed)

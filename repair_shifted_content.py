@@ -86,24 +86,33 @@ def main():
         title = str(r.get("Title") or "").strip()
         if not title or similar(listings[sku], title) >= 0.5:
             continue
-        # Only the confirmed one-row-shift cohort is safe to repair: the
-        # listing shows the ROW ABOVE's product, i.e. it is OUR OWN
-        # catalogue entry with the neighbour's content. A mismatch that
-        # does NOT match the row above is a barcode collision - our offer
-        # got attached to a foreign catalogue product, and re-pushing with
-        # the same bogus code would re-match (or vandalise a shared
-        # product page). Those are reported for delist+relist instead.
-        above = str(rows[i - 1].get("Title") or "").strip() if i else ""
-        if not above or similar(listings[sku], above) < 0.5:
+        # Only the confirmed neighbour-shift cohort is safe to repair: the
+        # listing shows a NEIGHBOURING row's product (row above = YRA
+        # 2026-08-14 pattern, row below = GTV 2026-08-21 pattern; both are
+        # OnBuy's matcher cross-linking consecutive API creates), i.e. it
+        # is OUR OWN catalogue entry with the neighbour's content. A
+        # mismatch that matches no neighbour within 3 rows is a barcode
+        # collision - our offer got attached to a foreign catalogue
+        # product, and re-pushing with the same bogus code would re-match
+        # (or vandalise a shared product page). Reported for delist+relist.
+        offset = None
+        for k in (1, -1, 2, -2, 3, -3):
+            j = i + k
+            if 0 <= j < len(rows):
+                nt = str(rows[j].get("Title") or "").strip()
+                if nt and similar(listings[sku], nt) >= 0.5:
+                    offset = k
+                    break
+        if offset is None:
             collisions.append((i + 2, sku, listings[sku][:60], title[:60]))
             continue
-        # If this SKU and the row above share ONE catalogue product (same
-        # OPC), rewriting it for this SKU would corrupt it for the other -
-        # OnBuy's broken-matcher era cross-linked some consecutive
+        # If this SKU and the matched neighbour share ONE catalogue product
+        # (same OPC), rewriting it for this SKU would corrupt it for the
+        # other - OnBuy's broken-matcher era cross-linked some consecutive
         # submissions onto a single product. Those need delist+relist.
         opc = str(r.get("OPC") or "").strip().upper()
-        opc_above = str(rows[i - 1].get("OPC") or "").strip().upper() if i else ""
-        if not opc or opc in ("", "PENDING") or opc == opc_above:
+        opc_nb = str(rows[i + offset].get("OPC") or "").strip().upper()
+        if not opc or opc in ("", "PENDING") or opc == opc_nb:
             collisions.append((i + 2, sku, listings[sku][:60], "SHARED/NO OPC - " + title[:44]))
             continue
         cat_id = str(r.get("Category ID") or "").strip()
@@ -121,7 +130,7 @@ def main():
     if REPAIR_LIMIT:
         targets = targets[:REPAIR_LIMIT]
         log.info("REPAIR_LIMIT: repairing first %d", len(targets))
-    for sku, _, lname, _cid in targets[:10]:
+    for sku, _, lname, _cid in targets:
         log.info("  target %s (onbuy shows: %s)", sku, lname[:60])
     if DRY_RUN:
         log.info("DRY RUN - nothing submitted")
