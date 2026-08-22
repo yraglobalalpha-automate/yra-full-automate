@@ -1,28 +1,31 @@
-"""Buy Box defense engine (2026-08-19, YRA rollout).
+"""Buy Box defense engine v2 (2026-08-21): API-driven, hands-free.
 
-Reads the "Competition" tab (the dashboard's Export Listings CSV imported
-as-is: sku, price, stock, opc, gtin, suspended_reason, lead_listing_price,
-winning_price, winning_status) and the Full sheet's cost data, then
-reprices losing listings in PENCE to retake the recommended spot - never
-below the sourcing-margin floor.
+OnBuy support named GET /v2/listings/check-winning (per SKU: our price, the
+Buy Box "lead" price and a winning flag), so the engine no longer needs the
+dashboard export. Every run:
+  1. pages GET /listings (sku, price, stock) - the live catalogue;
+  2. asks check-winning for every in-stock, unprotected SKU in batches;
+  3. classifies each contested page and reprices in PENCE to retake the
+     recommended spot - never below the sourcing-margin floor;
+  4. writes the contested picture to a "BuyBox" tab in the Full sheet.
 
-Policy (user-approved 2026-08-19): this is the ONE place automation may
-LOWER a price, and only when all of these hold:
-  - the Competition tab shows another seller winning our page
-    (winning_status blank/0) at a winning_price below our current price;
+Policy (user-approved 2026-08-19, mode A): this is the ONE place automation
+may LOWER a price, and only when all of these hold:
+  - OnBuy says another seller holds the Buy Box (winning=false) at a
+    lead_price BELOW our current price;
   - the row is sheet-managed with a usable Cost Price (floor computable);
-  - the new price (winning_price - UNDERCUT_PENCE) stays >= the floor.
-If the winner is below our floor: HOLD at floor (set price to floor if
-we're above it) and mark HELD - never chase into a loss.
+  - the new price (lead_price - UNDERCUT_PENCE) stays >= the floor.
+If the winner is below our floor: HOLD (keep price, flag HELD) - never chase
+into a loss. If we are already cheaper than the lead yet not winning, the
+box is decided by something other than price (ratings/delivery) - no action,
+flagged CHEAPER-NOT-WINNING, so we never bleed margin for nothing.
 Rows without cost data are logged NO-COST and never touched.
+Listings in protected_skus.txt (content incident) are skipped entirely.
 
 Floor = (cost + shipping) x DEFENSE_MULT (default 1.35 = 20% fee + 15%
-profit; user-approved defense-only tier 2026-08-19). The main pipeline's
-standard bands are unaffected.
-
-Writes a decision log back into the Competition tab (columns J+: Action,
-New Price, Floor, Decided At) and pushes price changes via the batched
-by-SKU endpoint. DRY_RUN default on."""
+profit; defense-only tier). The main pipeline's standard bands are untouched.
+DRY_RUN default on for manual runs; the daily schedule runs live. Pushes are
+forced to dry when the store's ONBUY_API_PUSH_ENABLED is not true."""
 import json
 import os
 import time
@@ -31,23 +34,19 @@ from datetime import datetime, timezone
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-from onbuy_client import OnBuyClient
-from retry_utils import RateLimitError, with_retry
+from onbuy_client import BASE_URL, OnBuyClient
+from retry_utils import PermanentError, RateLimitError, with_retry
 
 SHEET_NAME = "YRA_Full_Feed_Master"
-COMP_TAB = "Competition"
+LOG_TAB = "BuyBox"
 UNDERCUT_PENCE = int(os.getenv("UNDERCUT_PENCE") or "1")
-DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
-
-
 DEFENSE_MULT = float(os.getenv("DEFENSE_MULT") or "1.35")
+CHECK_BATCH = int(os.getenv("CHECK_BATCH") or "100")
+PUSH_ENABLED = (os.getenv("ONBUY_API_PUSH_ENABLED") or "").strip().lower() == "true"
+DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "") or not PUSH_ENABLED
 
 
 def _load_protected():
-    """protected_skus.txt (content-shift incident 2026-08-21): listings whose
-    OnBuy page shows another product and are stock-zeroed pending repair. A
-    stale export could show them winning/losing with stock - never reprice
-    or re-stock them from here."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protected_skus.txt")
     out = set()
     if os.path.exists(path):
@@ -63,10 +62,6 @@ PROTECTED_SKUS = _load_protected()
 
 
 def floor_price(cost, shipping):
-    """Defense-only floor (user-approved 2026-08-19): 20% OnBuy fee + 15%
-    profit = x1.35 over cost+shipping. Applies ONLY inside this engine and
-    ONLY on pages we are losing - the main pipeline's standard bands are
-    untouched, so everyday prices keep their full margins."""
     base = cost + shipping
     if base <= 0:
         return None
@@ -81,30 +76,78 @@ def to_f(v):
         return None
 
 
+def page_listings(onbuy):
+    """{sku: (price, stock)} for every live listing (dedupe repeats)."""
+    out = {}
+    offset, limit = 0, 100
+    while True:
+        def _page(off=offset):
+            r = onbuy._send("GET", f"{BASE_URL}/listings", what="listings page",
+                            params={"site_id": onbuy.site_id, "limit": limit, "offset": off}, timeout=60)
+            r.raise_for_status()
+            return r
+        body = with_retry(_page, what=f"listings page {offset}", max_attempts=3).json()
+        items = body.get("results") if isinstance(body, dict) else body
+        if not isinstance(items, list) or not items:
+            break
+        for it in items:
+            it = it or {}
+            sku = str(it.get("sku") or "").strip()
+            if sku and sku not in out:
+                try:
+                    stock = int(float(it.get("stock") or 0))
+                except (TypeError, ValueError):
+                    stock = 0
+                out[sku] = (to_f(it.get("price")), stock)
+        if len(items) < limit:
+            break
+        offset += limit
+        time.sleep(0.3)
+    return out
+
+
+def check_all(onbuy, skus):
+    """check-winning in batches; halves a batch on a 4xx (size limit unknown)."""
+    out = {}
+    queue = [skus[i:i + CHECK_BATCH] for i in range(0, len(skus), CHECK_BATCH)]
+    calls = 0
+    while queue:
+        chunk = queue.pop(0)
+        try:
+            res = onbuy.check_winning(chunk) or []
+            calls += 1
+        except RateLimitError:
+            print("burst limit - waiting 90s")
+            time.sleep(90)
+            queue.insert(0, chunk)
+            continue
+        except PermanentError as exc:
+            if len(chunk) > 10:
+                half = len(chunk) // 2
+                queue.insert(0, chunk[half:])
+                queue.insert(0, chunk[:half])
+                print(f"check-winning rejected a batch of {len(chunk)} ({str(exc)[:80]}) - splitting")
+                continue
+            print(f"check-winning failed for {len(chunk)} SKU(s): {str(exc)[:120]}")
+            continue
+        for r in res:
+            r = r or {}
+            sku = str(r.get("sku") or "").strip()
+            if sku:
+                out[sku] = (to_f(r.get("price")), to_f(r.get("lead_price")), bool(r.get("winning")))
+        time.sleep(1.0)
+    print(f"check-winning calls: {calls} | answers: {len(out)}")
+    return out
+
+
 def main():
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
         creds_dict, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(creds).open(SHEET_NAME)
-    comp = None
-    try:
-        comp = ss.worksheet(COMP_TAB)
-    except gspread.WorksheetNotFound:
-        # Imports often land as "SheetN" - auto-detect any tab whose header
-        # row matches the dashboard export format.
-        for w in ss.worksheets():
-            hdr = [str(h).strip().lower() for h in w.row_values(1)]
-            if "winning_status" in hdr and "sku" in hdr:
-                comp = w
-                print(f"using tab '{w.title}' (export headers detected)")
-                break
-    if comp is None:
-        tabs = [w.title for w in ss.worksheets()]
-        raise SystemExit(f"No tab with export headers found - existing tabs: {tabs}")
     main_sheet = ss.sheet1
-
     cost_by_sku = {}
-    for r in main_sheet.get_all_records():
+    for r in with_retry(lambda: main_sheet.get_all_records(), what="sheet read", max_attempts=3):
         sku = str(r.get("SKU") or "").strip()
         if not sku:
             continue
@@ -112,113 +155,100 @@ def main():
         ship = to_f(r.get("Shipping Cost (£)")) or 0.0
         if cost:
             cost_by_sku[sku] = (cost, ship)
-
-    rows = comp.get_all_records()
-    print(f"competition rows: {len(rows)} | sheet rows with cost: {len(cost_by_sku)}")
-
-    stat_counts = {}
-    wp_pop = pr_pop = 0
-    for r in rows:
-        if not str(r.get("sku") or "").strip():
-            continue
-        k = str(r.get("winning_status") or "").strip() or "(blank)"
-        stat_counts[k] = stat_counts.get(k, 0) + 1
-        if to_f(r.get("winning_price")):
-            wp_pop += 1
-        if to_f(r.get("price")):
-            pr_pop += 1
-    print(f"export health: winning_status={stat_counts} | winning_price populated={wp_pop} | our price populated={pr_pop}")
-
-    whatif_held = []
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    decisions = []   # (comp_rownum, action, new_price, floor)
-    repricers = []   # (sku, new_price, stock)
-    held = no_cost = winning = reprice = protected = 0
-    for i, r in enumerate(rows):
-        rownum = i + 2
-        sku = str(r.get("sku") or "").strip()
-        if not sku:
-            continue
-        if sku in PROTECTED_SKUS:
-            protected += 1
-            decisions.append((rownum, "PROTECTED", "", ""))
-            continue
-        status = str(r.get("winning_status") or "").strip()
-        our = to_f(r.get("price"))
-        win = to_f(r.get("winning_price"))
-        stock = int(to_f(r.get("stock")) or 0)
-        if status == "1" or not our or not win or win >= our:
-            winning += 1
-            continue
-        if sku not in cost_by_sku:
-            no_cost += 1
-            decisions.append((rownum, "NO-COST", "", ""))
-            continue
-        cost, ship = cost_by_sku[sku]
-        floor = floor_price(cost, ship)
-        if floor is None:
-            no_cost += 1
-            decisions.append((rownum, "NO-COST", "", ""))
-            continue
-        target = round(win - UNDERCUT_PENCE / 100.0, 2)
-        if target >= floor:
-            reprice += 1
-            decisions.append((rownum, "REPRICE", f"{target:.2f}", f"{floor:.2f}"))
-            repricers.append((sku, target, stock))
-        else:
-            # Mode A (user decision 2026-08-19): when the winner is below
-            # our floor we do NOT sacrifice margin for a position we still
-            # would not win - keep the current price and flag the row.
-            held += 1
-            decisions.append((rownum, "HELD", "", f"{floor:.2f}"))
-            whatif_held.append((sku, our, win, cost, ship))
-
-    print(f"winning/no-action: {winning} | reprice: {reprice} | held (floor): {held} | no cost basis: {no_cost} | protected (skipped): {protected}")
-    whatif = to_f(os.getenv("WHATIF_MULT") or "")
-    if whatif and whatif_held:
-        # How many currently-held pages become winnable if the floor were
-        # (cost+shipping) x WHATIF_MULT (e.g. 1.35 = 20% fee + 15% profit)?
-        winnable = [(s, o, w, round((c + sh) * whatif, 2)) for s, o, w, c, sh in whatif_held
-                    if round(w - UNDERCUT_PENCE / 100.0, 2) >= round((c + sh) * whatif, 2)]
-        print(f"WHAT-IF x{whatif}: {len(winnable)} of {len(whatif_held)} held page(s) become winnable")
-        for s, o, w, f2 in winnable[:10]:
-            print(f"  WHATIF {s}: ours={o:.2f} buybox={w:.2f} floor@x{whatif}={f2:.2f}")
-    for sku, p, _ in repricers[:8]:
-        print(f"  push {sku} -> {p:.2f}")
-    if DRY_RUN:
-        print("DRY RUN - no prices pushed, no log written")
-        return
+    print(f"sheet rows with cost: {len(cost_by_sku)} | protected: {len(PROTECTED_SKUS)} | push enabled: {PUSH_ENABLED} | dry run: {DRY_RUN}")
 
     onbuy = OnBuyClient()
     if not onbuy.authenticate():
         raise SystemExit("OnBuy auth failed")
-    pushed = failed = 0
-    for c0 in range(0, len(repricers), 500):
-        chunk = repricers[c0:c0 + 500]
-        try:
-            results = onbuy.update_listings_by_sku_batch(chunk)
-        except RateLimitError:
-            print(f"burst limit at {c0} - waiting 90s")
-            time.sleep(90)
-            results = onbuy.update_listings_by_sku_batch(chunk)
-        errs = {str((it or {}).get("sku") or "").strip(): str((it or {}).get("error") or "").strip()
-                for it in results}
-        for sku, _, _ in chunk:
-            if errs.get(sku, "missing"):
-                failed += 1
-            else:
-                pushed += 1
-        time.sleep(1.0)
-    print(f"pushed: {pushed} | failed: {failed}")
+    listings = page_listings(onbuy)
+    candidates = [s for s, (p, st) in listings.items() if st > 0 and p and s not in PROTECTED_SKUS]
+    print(f"live listings: {len(listings)} | in-stock unprotected candidates: {len(candidates)}")
+    win = check_all(onbuy, candidates)
 
-    header_updates = [{"range": "J1", "values": [["Action", "New Price", "Floor", "Decided At"]]}]
-    log_updates = [{"range": f"J{rn}:M{rn}", "values": [[a, np, fl, now]]}
-                   for rn, a, np, fl in decisions]
-    for i in range(0, len(log_updates), 200):
-        batch = header_updates + log_updates[i:i + 200] if i == 0 else log_updates[i:i + 200]
-        with_retry(lambda b=batch: comp.batch_update([dict(u) for u in b]),
-                   what="defense log write", max_attempts=3)
-    print(f"decision log written: {len(log_updates)} row(s)")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    counts = {"winning": 0, "no data": 0, "cheaper-not-winning": 0, "no cost": 0, "reprice": 0, "held": 0}
+    log_rows, repricers = [], []
+    for sku in candidates:
+        our_list, stock = listings[sku]
+        our, lead, winning = win.get(sku, (None, None, None))
+        our = our or our_list
+        if winning is None or not our:
+            counts["no data"] += 1
+            continue
+        if winning:
+            counts["winning"] += 1
+            continue
+        if not lead:
+            counts["no data"] += 1
+            continue
+        if lead >= our:
+            counts["cheaper-not-winning"] += 1
+            log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "CHEAPER-NOT-WINNING", "", "", now])
+            continue
+        if sku not in cost_by_sku:
+            counts["no cost"] += 1
+            log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "NO-COST", "", "", now])
+            continue
+        cost, ship = cost_by_sku[sku]
+        floor = floor_price(cost, ship)
+        if floor is None:
+            counts["no cost"] += 1
+            log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "NO-COST", "", "", now])
+            continue
+        target = round(lead - UNDERCUT_PENCE / 100.0, 2)
+        if target >= floor:
+            counts["reprice"] += 1
+            log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "REPRICE", f"{target:.2f}", f"{floor:.2f}", now])
+            repricers.append((sku, target, stock))
+        else:
+            counts["held"] += 1
+            log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "HELD", "", f"{floor:.2f}", now])
+    print("summary: " + " | ".join(f"{k}: {v}" for k, v in counts.items()))
+    for sku, p, _ in repricers[:10]:
+        print(f"  push {sku} -> {p:.2f}")
+
+    pushed = failed = 0
+    if repricers and not DRY_RUN:
+        for c0 in range(0, len(repricers), 500):
+            chunk = repricers[c0:c0 + 500]
+            try:
+                results = onbuy.update_listings_by_sku_batch(chunk)
+            except RateLimitError:
+                print(f"burst limit at {c0} - waiting 90s")
+                time.sleep(90)
+                results = onbuy.update_listings_by_sku_batch(chunk)
+            errs = {str((it or {}).get("sku") or "").strip(): str((it or {}).get("error") or "").strip()
+                    for it in results}
+            for sku, _, _ in chunk:
+                if errs.get(sku, "missing"):
+                    failed += 1
+                else:
+                    pushed += 1
+            time.sleep(1.0)
+        print(f"pushed: {pushed} | failed: {failed}")
+    elif repricers:
+        print("DRY RUN - no prices pushed")
+
+    # Contested picture -> "BuyBox" tab (replaced every run).
+    try:
+        try:
+            tab = ss.worksheet(LOG_TAB)
+        except gspread.WorksheetNotFound:
+            tab = ss.add_worksheet(title=LOG_TAB, rows=max(200, len(log_rows) + 20), cols=10)
+        header = [["SKU", "Our Price", "Buy Box Price", "Winning", "Action", "New Price", "Floor", "Decided At"],
+                  [f"run {now}", f"candidates {len(candidates)}", f"winning {counts['winning']}",
+                   f"reprice {counts['reprice']} (pushed {pushed})", f"held {counts['held']}",
+                   f"cheaper-not-winning {counts['cheaper-not-winning']}", f"no cost {counts['no cost']}",
+                   "DRY RUN" if DRY_RUN else "LIVE"]]
+        with_retry(lambda: tab.clear(), what="buybox tab clear", max_attempts=3)
+        body = header + log_rows
+        for i in range(0, len(body), 500):
+            chunk = body[i:i + 500]
+            with_retry(lambda c=chunk, off=i: tab.update(f"A{off + 1}", c, value_input_option="RAW"),
+                       what="buybox tab write", max_attempts=3)
+        print(f"BuyBox tab written: {len(log_rows)} contested row(s)")
+    except Exception as exc:
+        print(f"BuyBox tab write failed: {exc}")
 
 
 if __name__ == "__main__":

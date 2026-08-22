@@ -208,6 +208,30 @@ class OnBuyClient:
 
         return with_retry(_do_batch, what="onbuy update_listings_by_sku_batch", max_attempts=3)
 
+    def check_winning(self, skus):
+        """GET /v2/listings/check-winning (OnBuy support, 2026-08-21): Buy Box
+        status + competitive price per SKU. Returns the raw results list:
+        [{"sku", "price", "item_price", "delivery_price", "lead_price",
+          "lead_item_price", "lead_delivery_price", "winning": bool}, ...].
+        OnBuy documents it as a GET with a JSON body ({"site_id", "skus": [...]});
+        we send the body and mirror the SKUs as query params for safety."""
+        skus = [str(s).strip() for s in skus if str(s).strip()]
+        if not skus:
+            return []
+        payload = {"site_id": self.site_id, "skus": skus}
+
+        def _do_check():
+            resp = self._send(
+                "GET", f"{BASE_URL}/listings/check-winning", what="onbuy check_winning",
+                params={"site_id": self.site_id, "skus[]": skus}, json=payload, timeout=120,
+            )
+            logger.info("OnBuy check_winning(%d skus) raw response [%s]: %s", len(skus), resp.status_code, resp.text[:1500])
+            raise_for_status(resp, what="onbuy check_winning")
+            body = resp.json()
+            return body.get("results") if isinstance(body, dict) else body
+
+        return with_retry(_do_check, what="onbuy check_winning", max_attempts=3)
+
     def create_listings_batch(self, listings):
         """POST /v2/listings - attach seller offers to EXISTING catalogue
         products by OPC ({"opc","sku","condition","price","stock"} each).
