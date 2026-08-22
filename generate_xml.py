@@ -1982,6 +1982,20 @@ def main():
         except Exception:
             skipped_feed += 1
 
+    # Supabase Storage rejects objects over its size cap (OpenMaal's feed of
+    # ~5,700 products with full HTML descriptions got 413 "Payload too large"
+    # on every run, 2026-08-22). The hosted feed is a catalogue mirror, not
+    # what OnBuy reads (the API pushes are), so when the document is too big
+    # shorten the descriptions rather than fail the upload.
+    FEED_MAX_BYTES = 40 * 1024 * 1024
+    feed_bytes = ET.tostring(root, encoding="utf-8")
+    if len(feed_bytes) > FEED_MAX_BYTES:
+        for _d in root.iter("description"):
+            if _d.text and len(_d.text) > 400:
+                _d.text = _d.text[:400]
+        feed_bytes = ET.tostring(root, encoding="utf-8")
+        logger.info("Feed over %d MB - descriptions shortened to 400 chars for the hosted copy (now %.1f MB)",
+                    FEED_MAX_BYTES // (1024 * 1024), len(feed_bytes) / (1024 * 1024))
     ET.ElementTree(root).write("feed.xml", encoding="utf-8", xml_declaration=True)
     feed_url = storage.upload_feed()
 
