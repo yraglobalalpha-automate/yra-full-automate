@@ -146,6 +146,13 @@ def main():
         elif byid_path:
             proposal, source = byid_path, "by-id"
         if not proposal or proposal.lower() == sheet_cat.lower():
+            # nothing to restore from the mirror/id. Classify for the report:
+            # SAME-ID = the row's Category ID still maps to the text now in the
+            # cell (OnBuy rename only - meaning unchanged); UNKNOWN = no usable
+            # previous value left (mirror already re-upserted, id blank/equal)
+            # -> needs the sheet's version history.
+            kind = "SAME-ID" if (sheet_id and cur_by_id.get(sheet_id, "").lower() == sheet_cat.lower()) else "UNKNOWN"
+            print(f"ROW {rownum} SKU {sku} | {kind} | now: {sheet_cat[:80]} | title: {str(r.get('Title') or '')[:60]}")
             continue
         restored += 1
         new_id = cur_by_path.get(proposal.lower(), ("", ""))[0]
