@@ -766,6 +766,38 @@ def main():
     def is_valid_onbuy_category(category):
         return str(category).strip().lower() in valid_onbuy_categories
 
+    # A NON-EMPTY Category cell is a human decision (2026-08-22: 44 Arden rows
+    # the user had categorised by hand were re-matched after OnBuy renamed
+    # 107 paths and our category file was refreshed). Never replace typed
+    # text with a guess: resolve it - exact path; the row's Category ID
+    # (renames keep the id); a unique leaf name - or keep it and flag it.
+    _display_path = {cat.strip().lower(): cat for cat in onbuy_categories}
+    _path_by_id = {}
+    for _p, _id in category_id_by_path.items():
+        if _id is not None and _id not in _path_by_id:
+            _path_by_id[_id] = _p
+    _leaf_index = {}
+    for _cat in onbuy_categories:
+        _leaf_index.setdefault(_cat.rsplit(" > ", 1)[-1].strip().lower(), []).append(_cat)
+
+    def resolve_manual_category(current_category, current_id=None):
+        """(path, resolved). resolved=False keeps the typed text untouched."""
+        text = str(current_category or "").strip()
+        if not text:
+            return "", False
+        if is_valid_onbuy_category(text):
+            return _display_path[text.lower()], True
+        try:
+            cid = int(float(str(current_id).strip())) if str(current_id or "").strip() else None
+        except (TypeError, ValueError):
+            cid = None
+        if cid is not None and cid in _path_by_id:
+            return _display_path[_path_by_id[cid]], True
+        leaf = text.rsplit(" > ", 1)[-1].strip().lower()
+        if len(_leaf_index.get(leaf, [])) == 1:
+            return _leaf_index[leaf][0], True
+        return text, False
+
     # Precomputed token sets per category path (and per leaf segment) - both
     # for speed and correctness. The old scorer gave +2 whenever a product
     # word appeared as a SUBSTRING anywhere in the path text, so a
@@ -947,6 +979,14 @@ def main():
             i = idx + 2
             current_category = str(row.get("Category") or "").strip()
             if is_valid_onbuy_category(current_category):
+                continue
+            if current_category:
+                resolved, ok = resolve_manual_category(current_category, row.get("Category ID"))
+                if ok and resolved != current_category:
+                    category_updates.append({"range": f"{col_letter(col_map['Category'])}{i}", "values": [[resolved]]})
+                    logger.info("Row %d: category text refreshed to OnBuy's current name: %r -> %r", i, current_category, resolved)
+                elif not ok:
+                    logger.info("Row %d: manual category %r not recognised - kept as typed, not remapped", i, current_category)
                 continue
             mapped = map_onbuy_category(row.get("Title"), current_category, row.get("Description"))
             if mapped != current_category:
@@ -1366,6 +1406,7 @@ def main():
         # brand-new row gets categorized on this same pass, not just the upfront
         # full-catalog remap above, which ran before this row's eBay data existed) ====
         current_category = str(row.get("Category") or "").strip()
+        manual_unresolved = False
         if is_valid_onbuy_category(current_category):
             category = current_category
             category_needs_write = False
@@ -1377,6 +1418,11 @@ def main():
                     logger.info("Recategorized by eBay Type: %r -> %r", current_category, _by_type)
                     category = _by_type
                     category_needs_write = True
+        elif current_category:
+            # typed by a human - resolve (renames/ids/unique leaf) or keep as typed
+            category, _ok = resolve_manual_category(current_category, row.get("Category ID"))
+            category_needs_write = _ok and category != current_category
+            manual_unresolved = not _ok
         else:
             category = map_onbuy_category(title, current_category, description,
                                           (ebay_data.get("product_type") or "") if isinstance(ebay_data, dict) else "")
@@ -1542,7 +1588,10 @@ def main():
                     # for a human instead of burning the API call on a known
                     # rejection. Price/stock updates don't need a category,
                     # so already-created rows are unaffected.
-                    raise PermanentError("no matching OnBuy category - fill in the Category column and it will retry")
+                    raise PermanentError(
+                        "Category cell not recognised by OnBuy - check the spelling against the OnBuy category list (kept as typed)"
+                        if manual_unresolved else
+                        "no matching OnBuy category - fill in the Category column and it will retry")
                 if sku in PROTECTED_SKUS:
                     raise _SkipPushProtected()
                 if not already_created and not ONBUY_CREATE_ENABLED:
