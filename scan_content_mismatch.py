@@ -74,6 +74,12 @@ def main():
     sheet = gspread.authorize(creds).open("YRA_Full_Feed_Master").sheet1
     rows = sheet.get_all_records()
 
+    protected = set()
+    _pp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protected_skus.txt")
+    if os.path.exists(_pp):
+        with open(_pp, encoding="utf-8") as _fh:
+            protected = {ln.split("#", 1)[0].strip() for ln in _fh if ln.split("#", 1)[0].strip()}
+    print(f"protected SKUs on file: {len(protected)}")
     matched = mismatched = no_title = not_listed = 0
     mismatches = []  # (rownum, sku, listing_name, sheet_title, shifted_from_above)
     for i, r in enumerate(rows):
@@ -88,6 +94,9 @@ def main():
         lname, lcreated = listings[sku]
         if similar(lname, title) >= 0.5:
             matched += 1
+            if sku in protected:
+                # visible AND the name matches again -> safe to unprotect
+                print(f"OK|{i + 2}|{sku}|onbuy={lname[:60]}")
             continue
         mismatched += 1
         # Which neighbouring row does OnBuy's name belong to? +1 = the row
