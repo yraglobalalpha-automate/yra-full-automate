@@ -204,7 +204,7 @@ def main():
             counts["held"] += 1
             log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "HELD", "", f"{floor:.2f}", now])
     print("summary: " + " | ".join(f"{k}: {v}" for k, v in counts.items()))
-    for sku, p, _ in repricers[:10]:
+    for sku, p, _ in repricers:
         print(f"  push {sku} -> {p:.2f}")
 
     pushed = failed = 0
