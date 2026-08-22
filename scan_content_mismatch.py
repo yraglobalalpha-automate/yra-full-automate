@@ -126,6 +126,28 @@ def main():
     if mismatches:
         rownums = [m[0] for m in mismatches]
         print(f"mismatch row range: {min(rownums)}..{max(rownums)}")
+    # Daily guard (2026-08-21): shifts/collisions that are NOT yet protected
+    # are new exposure - email the on-call so they get zeroed/protected.
+    fresh = [m for m in mismatches if m[1] not in protected]
+    if fresh and os.getenv("ALERT_EMAIL_TO"):
+        try:
+            import notify
+            lines = []
+            for m in fresh[:60]:
+                kind = "collision" if m[4] is None else f"shift{m[4]:+d}"
+                lines.append(f"row {m[0]} SKU {m[1]} [{kind}] onbuy={m[2]} | sheet={m[3]}")
+            body = (
+                "Scan of live listings vs sheet titles found mismatched listings that are "
+                "not in protected_skus.txt yet. Action: zero stock (zero_stock_mismatched), "
+                "add them to protected_skus.txt, repair shifts / delist collisions."
+                + chr(10) + chr(10) + chr(10).join(lines)
+            )
+            notify.send_alert_email(
+                f"OnBuy content mismatch: {len(fresh)} unprotected listing(s) show another product",
+                body)
+            print(f"alert email sent for {len(fresh)} unprotected mismatch(es)")
+        except Exception as exc:
+            print(f"alert email failed: {exc}")
 
 
 if __name__ == "__main__":
