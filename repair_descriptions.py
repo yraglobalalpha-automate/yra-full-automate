@@ -81,7 +81,7 @@ def fetch_all_rows():
     rows, start, page = [], 0, 1000
     while True:
         resp = requests.get(
-            f"{SUPABASE_URL}/rest/v1/{TABLE}", params={"select": "*"},
+            f"{SUPABASE_URL}/rest/v1/{TABLE}", params={"select": "*", "order": "SKU"},
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
                      "Range": f"{start}-{start + page - 1}"},
             timeout=30)
