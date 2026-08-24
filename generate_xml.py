@@ -1031,7 +1031,12 @@ def main():
         oos_pending = []
         for idx, row in enumerate(data):
             status = str(row.get("Sync Status") or "").strip()
-            if not (status.startswith("Synced") or status.startswith("Pending Approval")):
+            # "Awaiting OnBuy go-live" rows ARE created products - excluding
+            # them left sold-out listings live on the front end while the
+            # listing stayed unaddressable (SKU 198651491114, 2026-08-24).
+            # Zero them too; not-yet-addressable ones bounce and retry.
+            if not (status.startswith("Synced") or status.startswith("Pending Approval")
+                    or status.startswith("Awaiting OnBuy go-live")):
                 continue
             raw_stock = str(row.get("Stock") if row.get("Stock") is not None else "").strip()
             if raw_stock == "":
