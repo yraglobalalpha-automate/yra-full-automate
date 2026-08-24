@@ -41,7 +41,7 @@ SHEET_NAME = "YRA_Full_Feed_Master"
 LOG_TAB = "BuyBox"
 UNDERCUT_PENCE = int(os.getenv("UNDERCUT_PENCE") or "1")
 DEFENSE_MULT = float(os.getenv("DEFENSE_MULT") or "1.35")
-CHECK_BATCH = int(os.getenv("CHECK_BATCH") or "100")
+CHECK_BATCH = int(os.getenv("CHECK_BATCH") or "500")  # OnBuy: max 1,000 SKUs/request, no separate rate limit (support, 2026-08-24)
 PUSH_ENABLED = (os.getenv("ONBUY_API_PUSH_ENABLED") or "").strip().lower() == "true"
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "") or not PUSH_ENABLED
 
