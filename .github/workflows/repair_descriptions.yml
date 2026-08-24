@@ -15,6 +15,9 @@ on:
       select_marked:
         description: "yes = only rows with visible template junk; no = every row with an OPC"
         default: "yes"
+      use_listings_opc:
+        description: "yes = take SKU->OPC from the live listings API (covers adopted rows with no stored OPC)"
+        default: "no"
 
 # OnBuy-touching: queue behind the scheduled sync, never overlap.
 concurrency:
@@ -53,4 +56,5 @@ jobs:
           MAX_PRODUCTS: ${{ inputs.max_products }}
           SKIP_FIRST: ${{ inputs.skip_first }}
           SELECT_MARKED: ${{ inputs.select_marked == 'no' && '0' || '1' }}
+          USE_LISTINGS_OPC: ${{ inputs.use_listings_opc == 'yes' && '1' || '0' }}
         run: python repair_descriptions.py
