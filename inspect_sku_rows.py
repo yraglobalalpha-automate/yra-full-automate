@@ -32,6 +32,23 @@ def main():
               f" | OPC={r.get('OPC')}")
         print(f"   title: {str(r.get('Title') or '')[:100]}")
         print(f"   url:   {str(r.get('Supplier URL') or '')[:100]}")
+        print(f"   ean={str(r.get('EAN') or '').strip()} | queue_id={str(r.get('OnBuy Product ID') or '').strip()}"
+              f" | last_sync={str(r.get('Last OnBuy Sync') or '').strip()} | checked={str(r.get('Last Checked Time') or '').strip()}")
+
+    n_sample = int(_os.getenv("AWAITING_SAMPLE") or "0")
+    if n_sample:
+        print(f"--- first {n_sample} rows still Awaiting OnBuy go-live (SKU | queue id | ean) ---")
+        shown = 0
+        for i, r in enumerate(rows):
+            if not str(r.get("Sync Status") or "").startswith("Awaiting OnBuy go-live"):
+                continue
+            print(f"AWAITING row {i + 2} | SKU {str(r.get('SKU') or '').strip()}"
+                  f" | queue_id={str(r.get('OnBuy Product ID') or '').strip()}"
+                  f" | ean={str(r.get('EAN') or '').strip()}"
+                  f" | title={str(r.get('Title') or '')[:60]}")
+            shown += 1
+            if shown >= n_sample:
+                break
 
 
 if __name__ == "__main__":
