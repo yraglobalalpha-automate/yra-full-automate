@@ -9,6 +9,12 @@ on:
       max_products:
         description: "Cap for this run"
         default: "1000"
+      skip_first:
+        description: "Skip the first N eligible products (paging)"
+        default: "0"
+      select_marked:
+        description: "yes = only rows with visible template junk; no = every row with an OPC"
+        default: "yes"
 
 # OnBuy-touching: queue behind the scheduled sync, never overlap.
 concurrency:
@@ -45,4 +51,6 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
           MAX_PRODUCTS: ${{ inputs.max_products }}
+          SKIP_FIRST: ${{ inputs.skip_first }}
+          SELECT_MARKED: ${{ inputs.select_marked == 'no' && '0' || '1' }}
         run: python repair_descriptions.py

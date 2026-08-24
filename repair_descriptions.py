@@ -29,6 +29,7 @@ TABLE = "YRA_Full_Feed_Master"
 
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
 MAX_PRODUCTS = int(os.getenv("MAX_PRODUCTS") or "1000")
+SKIP_FIRST = int(os.getenv("SKIP_FIRST") or "0")
 CHUNK = int(os.getenv("CHUNK") or "50")
 
 _JUNK_MARKERS = ("eselt", "ebay", "send us a message", "seller profile",
@@ -88,7 +89,7 @@ def main():
     logger.info("Products to re-push: %d (%d visibly contained template junk; "
                 "%d skipped with empty descriptions; cap %d)",
                 len(updates), had_junk, skipped_empty, MAX_PRODUCTS)
-    updates = updates[:MAX_PRODUCTS]
+    updates = updates[SKIP_FIRST:SKIP_FIRST + MAX_PRODUCTS]
     if DRY_RUN:
         for u in updates[:5]:
             logger.info("  sample: %s (%s) -> %.90s", u["_sku"], u["opc"], u["description"])
