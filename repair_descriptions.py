@@ -47,6 +47,36 @@ _JUNK_MARKERS = ("eselt", "ebay", "send us a message", "seller profile",
 SELECT_MARKED = (os.getenv("SELECT_MARKED") or "1").strip().lower() not in ("0", "no", "false")
 
 
+# When set, SKU->OPC comes from paging GET /listings (live truth): adopted/
+# CSV-era rows never had an OPC written to the sheet or mirror, so keying on
+# stored OPCs misses most of the catalogue (YRA: 1,359 of ~8k live, 2026-08-23).
+USE_LISTINGS_OPC = (os.getenv("USE_LISTINGS_OPC") or "0").strip().lower() in ("1", "yes", "true")
+
+
+def listings_opc_map(onbuy):
+    out, offset, limit = {}, 0, 100
+    while True:
+        resp = onbuy._send("GET", f"{BASE_URL}/listings", what="listings page",
+                           params={"site_id": onbuy.site_id, "limit": limit, "offset": offset}, timeout=60)
+        resp.raise_for_status()
+        body = resp.json()
+        items = body.get("results") if isinstance(body, dict) else body
+        if not isinstance(items, list) or not items:
+            break
+        for it in items:
+            it = it or {}
+            sku = str(it.get("sku") or "").strip()
+            opc = str(it.get("opc") or "").strip()
+            if sku and opc and sku not in out:
+                out[sku] = opc
+        if len(items) < limit:
+            break
+        offset += limit
+        time.sleep(0.3)
+    logger.info("listings OPC map: %d live listings", len(out))
+    return out
+
+
 def fetch_all_rows():
     rows, start, page = [], 0, 1000
     while True:
@@ -68,9 +98,12 @@ def main():
     rows = fetch_all_rows()
     logger.info("Supabase rows: %d", len(rows))
 
+    _opc_map = listings_opc_map(onbuy) if USE_LISTINGS_OPC else {}
     updates, skipped_empty, had_junk = [], 0, 0
     for r in rows:
         opc = str(r.get("OPC") or "").strip()
+        if USE_LISTINGS_OPC:
+            opc = _opc_map.get(str(r.get("SKU") or "").strip(), "") or opc
         if not opc or opc.upper() == "PENDING":
             continue
         raw = str(r.get("Description") or "")
