@@ -8,6 +8,10 @@ on:
       dry_run:
         description: "List targets without changing stock (yes/no)"
         default: "yes"
+      zero_skus:
+        description: "Comma-separated SKUs to zero regardless of name match"
+        required: false
+        default: ""
 
 # Reads the live OnBuy listings - shares the API quota/token with the sync,
 # so queue behind it rather than overlapping (see run.yml for why).
@@ -45,4 +49,5 @@ jobs:
           ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ZERO_SKUS: ${{ inputs.zero_skus }}
         run: python zero_stock_mismatched.py

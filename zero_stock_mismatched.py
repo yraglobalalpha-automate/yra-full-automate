@@ -24,6 +24,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
+ZERO_SKUS = {s.strip() for s in (os.getenv("ZERO_SKUS") or "").split(",") if s.strip()}
 
 
 def norm(s):
@@ -79,7 +80,7 @@ def main():
             continue
         title = str(r.get("Title") or "").strip()
         lname, lstock, lprice = listings[sku]
-        if not title or similar(lname, title) >= 0.5:
+        if sku not in ZERO_SKUS and (not title or similar(lname, title) >= 0.5):
             continue
         # Already at zero (a previous pass got it, or it was empty anyway):
         # nothing to protect - skipping makes every pass pure progress, so

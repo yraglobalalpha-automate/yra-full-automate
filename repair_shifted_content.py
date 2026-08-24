@@ -26,6 +26,12 @@ log = logging.getLogger(__name__)
 
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
 REPAIR_LIMIT = int(os.getenv("REPAIR_LIMIT") or "0")  # 0 = no cap
+# Explicit SKUs are repaired even when the OnBuy NAME matches the sheet:
+# near-identical sibling titles (XGODY projectors, YRA rows 4457-4461,
+# 2026-08-23) hide a cross-linked DESCRIPTION from the name scanner - a
+# wrong order on 993578879973 proved it. Re-pushing a row's own content
+# is harmless when the listing was already correct.
+REPAIR_SKUS = {s.strip() for s in (os.getenv("REPAIR_SKUS") or "").split(",") if s.strip()}
 
 
 def norm(s):
@@ -84,7 +90,9 @@ def main():
         if not sku or sku not in listings:
             continue
         title = str(r.get("Title") or "").strip()
-        if not title or similar(listings[sku], title) >= 0.5:
+        if not title:
+            continue
+        if sku not in REPAIR_SKUS and similar(listings[sku], title) >= 0.5:
             continue
         # Only the confirmed neighbour-shift cohort is safe to repair: the
         # listing shows a NEIGHBOURING row's product (row above = YRA
@@ -95,14 +103,17 @@ def main():
         # collision - our offer got attached to a foreign catalogue
         # product, and re-pushing with the same bogus code would re-match
         # (or vandalise a shared product page). Reported for delist+relist.
-        offset = None
-        for k in (1, -1, 2, -2, 3, -3):
-            j = i + k
-            if 0 <= j < len(rows):
-                nt = str(rows[j].get("Title") or "").strip()
-                if nt and similar(listings[sku], nt) >= 0.5:
-                    offset = k
-                    break
+        if sku in REPAIR_SKUS:
+            offset = 0
+        else:
+            offset = None
+            for k in (1, -1, 2, -2, 3, -3):
+                j = i + k
+                if 0 <= j < len(rows):
+                    nt = str(rows[j].get("Title") or "").strip()
+                    if nt and similar(listings[sku], nt) >= 0.5:
+                        offset = k
+                        break
         if offset is None:
             collisions.append((i + 2, sku, listings[sku][:60], title[:60]))
             continue
@@ -111,8 +122,8 @@ def main():
         # other - OnBuy's broken-matcher era cross-linked some consecutive
         # submissions onto a single product. Those need delist+relist.
         opc = str(r.get("OPC") or "").strip().upper()
-        opc_nb = str(rows[i + offset].get("OPC") or "").strip().upper()
-        if not opc or opc in ("", "PENDING") or opc == opc_nb:
+        opc_nb = "" if sku in REPAIR_SKUS else str(rows[i + offset].get("OPC") or "").strip().upper()
+        if not opc or opc in ("", "PENDING") or (opc_nb and opc == opc_nb):
             collisions.append((i + 2, sku, listings[sku][:60], "SHARED/NO OPC - " + title[:44]))
             continue
         cat_id = str(r.get("Category ID") or "").strip()
