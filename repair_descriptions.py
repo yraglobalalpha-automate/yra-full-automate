@@ -54,12 +54,17 @@ USE_LISTINGS_OPC = (os.getenv("USE_LISTINGS_OPC") or "0").strip().lower() in ("1
 
 
 def listings_opc_map(onbuy):
+    from retry_utils import with_retry as _wr
     out, offset, limit = {}, 0, 100
     while True:
-        resp = onbuy._send("GET", f"{BASE_URL}/listings", what="listings page",
-                           params={"site_id": onbuy.site_id, "limit": limit, "offset": offset}, timeout=60)
-        resp.raise_for_status()
-        body = resp.json()
+        def _page(off=offset):
+            r = onbuy._send("GET", f"{BASE_URL}/listings", what="listings page",
+                            params={"site_id": onbuy.site_id, "limit": limit, "offset": off}, timeout=60)
+            r.raise_for_status()
+            return r
+        # OnBuy's listings endpoint 500s intermittently mid-pagination
+        # (killed 3 of 7 re-push pages, 2026-08-24) - retry each page.
+        body = _wr(_page, what=f"listings page {offset}", max_attempts=4).json()
         items = body.get("results") if isinstance(body, dict) else body
         if not isinstance(items, list) or not items:
             break
