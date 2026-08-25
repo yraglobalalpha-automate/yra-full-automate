@@ -30,12 +30,23 @@ def main():
         creds_dict, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
     sheet = with_retry(lambda: gspread.authorize(creds).open(SHEET_NAME).sheet1, what="sheet open", max_attempts=3)
     rows = with_retry(lambda: sheet.get_all_records(), what="sheet read", max_attempts=3)
+    headers = with_retry(lambda: sheet.row_values(1), what="headers", max_attempts=3)
+    sku_col = {h.strip(): i for i, h in enumerate(headers)}["SKU"] + 1
+    # Displayed strings - get_all_records numericises "0102..." and 102...
+    # to the same int, hiding exactly the difference this probe exists to
+    # find. The displayed text keeps the imported rows' leading zeros; a
+    # number-formatted pre cell displays zero-less, which is also what
+    # get_all_records feeds the pipeline's by-SKU pushes.
+    disp = with_retry(lambda: sheet.col_values(sku_col), what="sku display col", max_attempts=3)
+
+    def display(rownum):
+        return str(disp[rownum - 1]).strip() if rownum - 1 < len(disp) else ""
 
     pre, imported = {}, {}
     for i, r in enumerate(rows):
         rownum = i + 2
-        sku = str(r.get("SKU") or "").strip()
-        if not sku:
+        sku = display(rownum)
+        if not sku or not core(sku):
             continue
         if rownum < BLOCK_START:
             pre.setdefault(core(sku), []).append((rownum, sku, str(r.get("Sync Status") or "").strip()))
