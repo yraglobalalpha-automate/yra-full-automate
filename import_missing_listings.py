@@ -79,8 +79,21 @@ def main():
     for need in ("SKU", "Title", "Selling Price (£)", "Stock", "Sync Status"):
         if need not in col:
             raise SystemExit(f"missing column {need!r} - headers: {headers}")
-    sheet_skus = {str(v).strip() for v in with_retry(
-        lambda: sheet.col_values(col["SKU"] + 1), what="sku column", max_attempts=3)[1:] if str(v).strip()}
+    # Both views of the SKU column: get_all_records (raw/numericised - what a
+    # number-formatted cell really holds) AND col_values (displayed text),
+    # plus comma-stripped variants. The 08-25 import used displayed text
+    # only, so cells shown with thousands separators didn't match their
+    # plain live SKUs and got re-imported as duplicate rows (YRA 344).
+    sheet_skus = set()
+    for rec in with_retry(lambda: sheet.get_all_records(), what="sheet records", max_attempts=3):
+        s = str(rec.get("SKU") or "").strip()
+        if s:
+            sheet_skus.add(s)
+    for v in with_retry(lambda: sheet.col_values(col["SKU"] + 1), what="sku column", max_attempts=3)[1:]:
+        s = str(v).strip()
+        if s:
+            sheet_skus.add(s)
+            sheet_skus.add(s.replace(",", ""))
     print(f"sheet SKUs: {len(sheet_skus)}")
 
     onbuy = OnBuyClient()

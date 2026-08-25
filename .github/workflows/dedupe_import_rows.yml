@@ -1,0 +1,30 @@
+name: Dedupe Import Rows
+
+on:
+  workflow_dispatch:
+    inputs:
+      block_start:
+        description: "First sheet row number of the appended import block"
+        required: true
+      dry_run:
+        description: "yes = list; no = delete the import-created duplicate copies"
+        required: false
+        default: "yes"
+
+jobs:
+  dedupe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Dedupe
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          BLOCK_START: ${{ inputs.block_start }}
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+        run: python dedupe_import_rows.py
