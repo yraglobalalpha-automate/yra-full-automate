@@ -736,6 +736,31 @@ def main():
         if _i + 1 < len(sku_display):
             _row["SKU"] = re.sub(r"[,\s]", "", str(sku_display[_i + 1]))
 
+    # Manual targeted runs: the dispatch form's `rows` input (env ROWS_RANGE,
+    # e.g. "2200-2320", "116", "10-50,200-210") limits THIS run - batch
+    # selection, OOS pass and activation pass - to those sheet row numbers
+    # (as seen in Google Sheets, header = row 1). Scheduled runs never set
+    # it. A typed range also overrides the manual-run "unfilled rows only"
+    # default: naming rows means refresh exactly these, filled or not.
+    rows_range_spec = (os.getenv("ROWS_RANGE") or "").strip()
+    rows_ranges = []
+    if rows_range_spec:
+        for _part in rows_range_spec.split(","):
+            _part = _part.strip()
+            if not _part:
+                continue
+            _a, _, _b = _part.partition("-")
+            try:
+                _lo, _hi = int(_a), int(_b or _a)
+            except ValueError:
+                logger.error("rows input %r is not a row number or a start-end range", _part)
+                sys.exit(1)
+            rows_ranges.append((min(_lo, _hi), max(_lo, _hi)))
+        logger.info("Targeted run: limited to sheet row(s) %s", rows_range_spec)
+
+    def row_in_ranges(rownum):
+        return (not rows_ranges) or any(lo <= rownum <= hi for lo, hi in rows_ranges)
+
     logger.info("TOTAL ROWS IN SHEET: %d", len(data))
 
     # ================= DYNAMIC BATCH SIZE =================
@@ -1042,6 +1067,8 @@ def main():
     if ONBUY_API_PUSH_ENABLED and onbuy_ready:
         oos_pending = []
         for idx, row in enumerate(data):
+            if not row_in_ranges(idx + 2):
+                continue
             status = str(row.get("Sync Status") or "").strip()
             # "Awaiting OnBuy go-live" rows ARE created products - excluding
             # them left sold-out listings live on the front end while the
@@ -1180,6 +1207,8 @@ def main():
     if ONBUY_API_PUSH_ENABLED and onbuy_ready:
         pending_activation = []
         for idx, row in enumerate(data):
+            if not row_in_ranges(idx + 2):
+                continue
             status = str(row.get("Sync Status") or "").strip()
             # "Pending Approval" = fresh create; "Synced" with a blank Last
             # OnBuy Sync = the hourly backfill confirmed the queue before this
@@ -1282,7 +1311,11 @@ def main():
     # slots in a run, so none of the 376 real rows were even reached).
     # Filtering them out before the sort/slice means batch capacity is only
     # ever spent on rows that can actually make progress.
-    processable = [(idx, row) for idx, row in enumerate(data) if "ebay." in str(row.get("Supplier URL", "")).strip().lower()]
+    processable = [(idx, row) for idx, row in enumerate(data)
+                   if "ebay." in str(row.get("Supplier URL", "")).strip().lower()
+                   and row_in_ranges(idx + 2)]
+    if rows_ranges:
+        logger.info("Targeted run: %d processable row(s) inside the requested range(s)", len(processable))
     skipped_incomplete = len(data) - len(processable)
     if skipped_incomplete:
         logger.info("Skipping %d row(s) with no eBay Supplier URL yet (not counted against this run's batch)", skipped_incomplete)
@@ -1295,6 +1328,7 @@ def main():
     # refresh_all=yes on the dispatch form restores a deliberate full
     # sweep (repricing days). Local runs behave like scheduled.
     if os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch" \
+            and not rows_ranges \
             and str(os.getenv("REFRESH_ALL") or "").strip().lower() not in ("yes", "true", "1"):
         _unfilled = [(idx, row) for idx, row in processable
                      if not str(row.get("Title") or "").strip()]

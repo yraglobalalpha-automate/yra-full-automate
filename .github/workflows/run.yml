@@ -12,6 +12,10 @@ on:
         description: "Set to yes to ALSO re-fetch already-filled rows. Default: manual runs only fill NEW rows"
         required: false
         default: ""
+      rows:
+        description: "Only process these sheet rows, e.g. 2200-2320 or 116 or 10-50,200-210. Empty = normal run"
+        required: false
+        default: ""
 
 # Never let two OnBuy-touching runs execute at the same time - they share the
 # same 240-calls/hour API quota AND a fresh token from one run supersedes the
@@ -51,6 +55,7 @@ jobs:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           RECATEGORIZE_FROM_TYPE: ${{ inputs.recategorize == 'yes' && '1' || '' }}
+          ROWS_RANGE: ${{ inputs.rows }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
           ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
           ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
