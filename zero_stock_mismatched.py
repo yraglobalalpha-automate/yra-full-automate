@@ -72,6 +72,14 @@ def main():
         creds_dict, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
     sheet = gspread.authorize(creds).open("YRA_Full_Feed_Master").sheet1
     rows = sheet.get_all_records()
+    # Displayed SKU text overrides numericise - leading zeros survive (see
+    # generate_xml.py's matching overlay, 2026-08-27).
+    _hdrs = [str(h).strip() for h in sheet.row_values(1)]
+    if "SKU" in _hdrs:
+        _sku_display = sheet.col_values(_hdrs.index("SKU") + 1)
+        for _i, _row in enumerate(rows):
+            if _i + 1 < len(_sku_display):
+                _row["SKU"] = re.sub(r"[,\s]", "", str(_sku_display[_i + 1]))
 
     targets = []
     for i, r in enumerate(rows):
