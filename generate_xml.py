@@ -1489,7 +1489,14 @@ def main():
         shipping_cost = float(row.get("Shipping Cost (£)") or 0)
         formula_price = pricing.calculate_selling_price(cost_price, shipping_cost)
         existing_price = float(row.get("Selling Price (£)") or 0)
-        selling_price = 0 if stock == 0 else max(existing_price, formula_price)
+        # Out-of-stock must never destroy the price: writing 0 into the
+        # Selling Price cell erased manually-raised prices (max() only
+        # protects what's still in the cell), and on restock the formula
+        # price silently replaced the manual one (Arden, user report
+        # 2026-08-28). Keep the price; stock 0 rides on its own column and
+        # push (stock-0 updates with a real price are valid - the OOS pass
+        # already pushes exactly that).
+        selling_price = max(existing_price, formula_price)
 
         # ================= PRICE CHECK FLAG =================
         # Normal = at/near the default margin, Medium = moderately above it,
