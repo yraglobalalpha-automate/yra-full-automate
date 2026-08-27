@@ -17,6 +17,7 @@ seen at real scale.
 """
 import json
 import os
+import re
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -37,6 +38,13 @@ sheet = client.open("YRA_Full_Feed_Master").sheet1
 headers = sheet.row_values(1)
 col_map = {col: idx + 1 for idx, col in enumerate(headers)}
 data = sheet.get_all_records()
+# Displayed SKU text overrides numericise - leading zeros survive (see the
+# matching overlay in generate_xml.py, 2026-08-27).
+if "SKU" in col_map:
+    _sku_display = sheet.col_values(col_map["SKU"])
+    for _i, _row in enumerate(data):
+        if _i + 1 < len(_sku_display):
+            _row["SKU"] = re.sub(r"[,\s]", "", str(_sku_display[_i + 1]))
 
 if "Sync Status" not in col_map:
     print("Sheet has no 'Sync Status' column - nothing to check.")

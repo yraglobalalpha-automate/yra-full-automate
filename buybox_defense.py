@@ -28,6 +28,7 @@ DRY_RUN default on for manual runs; the daily schedule runs live. Pushes are
 forced to dry when the store's ONBUY_API_PUSH_ENABLED is not true."""
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 
@@ -147,8 +148,16 @@ def main():
     ss = gspread.authorize(creds).open(SHEET_NAME)
     main_sheet = ss.sheet1
     cost_by_sku = {}
-    for r in with_retry(lambda: main_sheet.get_all_records(), what="sheet read", max_attempts=3):
-        sku = str(r.get("SKU") or "").strip()
+    main_rows = with_retry(lambda: main_sheet.get_all_records(), what="sheet read", max_attempts=3)
+    # Cost map keys come from the SKU column's DISPLAYED text - numericise
+    # strips leading zeros, and live SKUs carry them (see generate_xml.py's
+    # matching overlay, 2026-08-27); a stripped key would never match the
+    # live listing and the row would sit NO-COST despite a filled cost.
+    _hdrs = [str(h).strip() for h in with_retry(lambda: main_sheet.row_values(1), what="headers", max_attempts=3)]
+    _sku_display = with_retry(lambda: main_sheet.col_values(_hdrs.index("SKU") + 1),
+                              what="sku display col", max_attempts=3)
+    for _i, r in enumerate(main_rows):
+        sku = re.sub(r"[,\s]", "", str(_sku_display[_i + 1])) if _i + 1 < len(_sku_display) else str(r.get("SKU") or "").strip()
         if not sku:
             continue
         cost = to_f(r.get("Cost Price (£)"))

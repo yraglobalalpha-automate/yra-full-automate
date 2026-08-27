@@ -724,6 +724,18 @@ def main():
     # Same hygiene on the row dicts (their keys come from the header row).
     data = [{str(k).strip(): v for k, v in row.items()} for row in data]
 
+    # SKUs are taken from the column's DISPLAYED text, not get_all_records:
+    # numericise turns a pure-digit SKU stored with a leading zero into an
+    # int with the zero stripped, so every by-SKU push targets a SKU OnBuy
+    # doesn't know and defers "Awaiting OnBuy go-live" forever (GTV's 127
+    # census pairs, repaired 2026-08-27, all carried leading-zero SKUs).
+    # Formatting characters are stripped; leading zeros are kept.
+    sku_display = with_retry(lambda: sheet.col_values(col_map["SKU"]),
+                             what="sku display column", max_attempts=3)
+    for _i, _row in enumerate(data):
+        if _i + 1 < len(sku_display):
+            _row["SKU"] = re.sub(r"[,\s]", "", str(sku_display[_i + 1]))
+
     logger.info("TOTAL ROWS IN SHEET: %d", len(data))
 
     # ================= DYNAMIC BATCH SIZE =================
