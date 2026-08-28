@@ -1660,18 +1660,36 @@ def main():
                     result = onbuy.update_listing(sku=sku, price=selling_price, stock=stock)
                     action = "updated"
                 else:
-                    action, result = onbuy.sync_product(
-                        sku=sku,
-                        ean=upc_for_onbuy,
-                        title=title or str(row.get("Title") or ""),
-                        description=description,
-                        brand=brand_for_onbuy,
-                        category_id=category_id,
-                        price=selling_price,
-                        stock=stock,
-                        main_image=main_image,
-                        additional_images=additional_images,
-                    )
+                    # A row can reach the create path with its SKU ALREADY a
+                    # live listing - the team entered an old product without
+                    # "Synced" (Makstore 2026-08-28: 86 rows create-pathed
+                    # into phantom queue entries). One check-winning call
+                    # answers only for existing listings, so a hit means
+                    # adopt via the plain update; any check failure falls
+                    # through to the normal create.
+                    _live_hit = False
+                    try:
+                        _res = onbuy.check_winning([sku]) or []
+                        _live_hit = any(str((_e or {}).get("sku") or "").strip() == sku for _e in _res)
+                    except Exception as _exc:
+                        logger.info("live-SKU pre-create check failed for %s (%s) - proceeding with create", sku, str(_exc)[:80])
+                    if _live_hit:
+                        logger.info("SKU %s is already a live listing - adopting via update instead of creating a duplicate", sku)
+                        result = onbuy.update_listing(sku=sku, price=selling_price, stock=stock)
+                        action = "updated"
+                    else:
+                        action, result = onbuy.sync_product(
+                            sku=sku,
+                            ean=upc_for_onbuy,
+                            title=title or str(row.get("Title") or ""),
+                            description=description,
+                            brand=brand_for_onbuy,
+                            category_id=category_id,
+                            price=selling_price,
+                            stock=stock,
+                            main_image=main_image,
+                            additional_images=additional_images,
+                        )
                 logger.info("OnBuy %s: %s", action, sku)
                 # Stamp ONLY updates. OnBuy confirmed (support, 2026-08-11)
                 # that product-create IGNORES the embedded price/stock by
