@@ -80,7 +80,7 @@ def main():
         _sku_display = sheet.col_values(_hdrs.index("SKU") + 1)
         for _i, _row in enumerate(rows):
             if _i + 1 < len(_sku_display):
-                _row["SKU"] = re.sub(r"[,\s]", "", str(_sku_display[_i + 1]))
+                _row["SKU"] = str(_sku_display[_i + 1]).replace(",", "").strip()
 
     protected = set()
     _pp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protected_skus.txt")

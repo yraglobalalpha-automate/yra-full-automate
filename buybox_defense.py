@@ -157,7 +157,7 @@ def main():
     _sku_display = with_retry(lambda: main_sheet.col_values(_hdrs.index("SKU") + 1),
                               what="sku display col", max_attempts=3)
     for _i, r in enumerate(main_rows):
-        sku = re.sub(r"[,\s]", "", str(_sku_display[_i + 1])) if _i + 1 < len(_sku_display) else str(r.get("SKU") or "").strip()
+        sku = str(_sku_display[_i + 1]).replace(",", "").strip() if _i + 1 < len(_sku_display) else str(r.get("SKU") or "").strip()
         if not sku:
             continue
         cost = to_f(r.get("Cost Price (£)"))

@@ -734,7 +734,7 @@ def main():
                              what="sku display column", max_attempts=3)
     for _i, _row in enumerate(data):
         if _i + 1 < len(sku_display):
-            _row["SKU"] = re.sub(r"[,\s]", "", str(sku_display[_i + 1]))
+            _row["SKU"] = str(sku_display[_i + 1]).replace(",", "").strip()
 
     # Manual targeted runs: the dispatch form's `rows` input (env ROWS_RANGE,
     # e.g. "2200-2320", "116", "10-50,200-210") limits THIS run - batch
