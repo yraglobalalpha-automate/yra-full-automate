@@ -42,6 +42,18 @@ data = sheet.get_all_records()
 # matching overlay in generate_xml.py, 2026-08-27).
 if "SKU" in col_map:
     _sku_display = sheet.col_values(col_map["SKU"])
+    # Mid-read edit guard (see generate_xml.py, 2026-08-29): two identical
+    # consecutive column reads prove no edit landed between the reads.
+    for _stab in range(3):
+        _sku_display_2 = sheet.col_values(col_map["SKU"])
+        if _sku_display_2 == _sku_display:
+            break
+        print("Sheet changed between reads - re-reading for a consistent snapshot")
+        data = sheet.get_all_records()
+        _sku_display = _sku_display_2
+    else:
+        print("Sheet still being edited after 3 re-reads - aborting; the next hourly run will retry")
+        raise SystemExit(1)
     for _i, _row in enumerate(data):
         if _i + 1 < len(_sku_display):
             _row["SKU"] = str(_sku_display[_i + 1]).replace(",", "").strip()

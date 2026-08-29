@@ -156,6 +156,18 @@ def main():
     _hdrs = [str(h).strip() for h in with_retry(lambda: main_sheet.row_values(1), what="headers", max_attempts=3)]
     _sku_display = with_retry(lambda: main_sheet.col_values(_hdrs.index("SKU") + 1),
                               what="sku display col", max_attempts=3)
+    # Mid-read edit guard (see generate_xml.py, 2026-08-29).
+    for _stab in range(3):
+        _sku_display_2 = with_retry(lambda: main_sheet.col_values(_hdrs.index("SKU") + 1),
+                                    what="sku display recheck", max_attempts=3)
+        if _sku_display_2 == _sku_display:
+            break
+        print("Sheet changed between reads - re-reading for a consistent snapshot")
+        main_rows = with_retry(lambda: main_sheet.get_all_records(), what="sheet read", max_attempts=3)
+        _sku_display = _sku_display_2
+    else:
+        print("Sheet still being edited after 3 re-reads - aborting this run")
+        raise SystemExit(1)
     for _i, r in enumerate(main_rows):
         sku = str(_sku_display[_i + 1]).replace(",", "").strip() if _i + 1 < len(_sku_display) else str(r.get("SKU") or "").strip()
         if not sku:

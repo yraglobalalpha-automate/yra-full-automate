@@ -732,6 +732,24 @@ def main():
     # Formatting characters are stripped; leading zeros are kept.
     sku_display = with_retry(lambda: sheet.col_values(col_map["SKU"]),
                              what="sku display column", max_attempts=3)
+    # Mid-read edit guard: a row inserted/deleted between the records read
+    # and this column read misaligns every SKU below the edit point (a
+    # 4,659-row false shift alarm on 2026-08-29 - and in THIS run it would
+    # push prices under neighbours' SKUs). Two identical consecutive column
+    # reads prove the window was quiet; otherwise re-read everything.
+    for _stab in range(3):
+        _sku_display_2 = with_retry(lambda: sheet.col_values(col_map["SKU"]),
+                                    what="sku display column recheck", max_attempts=3)
+        if _sku_display_2 == sku_display:
+            break
+        logger.warning("Sheet changed between reads - re-reading for a consistent snapshot (attempt %d)", _stab + 1)
+        data = with_retry(lambda: sheet.get_all_records(),
+                          what="sheet read", max_attempts=3)
+        data = [{str(k).strip(): v for k, v in row.items()} for row in data]
+        sku_display = _sku_display_2
+    else:
+        logger.error("Sheet still being edited after 3 re-reads - aborting this run untouched; the next run will retry")
+        sys.exit(1)
     for _i, _row in enumerate(data):
         if _i + 1 < len(sku_display):
             _row["SKU"] = str(sku_display[_i + 1]).replace(",", "").strip()

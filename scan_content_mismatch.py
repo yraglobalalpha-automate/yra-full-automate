@@ -78,6 +78,19 @@ def main():
     _hdrs = [str(h).strip() for h in sheet.row_values(1)]
     if "SKU" in _hdrs:
         _sku_display = sheet.col_values(_hdrs.index("SKU") + 1)
+        # Mid-read edit guard (see generate_xml.py, 2026-08-29): an edit
+        # between the two reads misaligns the join - the 4,659-row false
+        # shift alarm this guard exists to prevent.
+        for _stab in range(3):
+            _sku_display_2 = sheet.col_values(_hdrs.index("SKU") + 1)
+            if _sku_display_2 == _sku_display:
+                break
+            print("Sheet changed between reads - re-reading for a consistent snapshot")
+            rows = sheet.get_all_records()
+            _sku_display = _sku_display_2
+        else:
+            print("Sheet still being edited after 3 re-reads - aborting this scan")
+            raise SystemExit(1)
         for _i, _row in enumerate(rows):
             if _i + 1 < len(_sku_display):
                 _row["SKU"] = str(_sku_display[_i + 1]).replace(",", "").strip()
