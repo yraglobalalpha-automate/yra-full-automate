@@ -1670,7 +1670,15 @@ def main():
                     _live_hit = False
                     try:
                         _res = onbuy.check_winning([sku]) or []
-                        _live_hit = any(str((_e or {}).get("sku") or "").strip() == sku for _e in _res)
+                        # An entry can carry the SKU WITH an error field
+                        # ("SKU not found") for non-existent SKUs - only an
+                        # error-free entry proves a live listing (YRA
+                        # 2026-08-29: the guard rerouted 3 fresh creates
+                        # into doomed updates).
+                        _live_hit = any(
+                            str((_e or {}).get("sku") or "").strip() == sku
+                            and not str((_e or {}).get("error") or "").strip()
+                            for _e in _res)
                     except Exception as _exc:
                         logger.info("live-SKU pre-create check failed for %s (%s) - proceeding with create", sku, str(_exc)[:80])
                     if _live_hit:
