@@ -131,7 +131,11 @@ def main():
         # submissions onto a single product. Those need delist+relist.
         opc = str(r.get("OPC") or "").strip().upper()
         opc_nb = "" if sku in REPAIR_SKUS else str(rows[i + offset].get("OPC") or "").strip().upper()
-        if not opc or opc in ("", "PENDING") or (opc_nb and opc == opc_nb):
+        # Operator-named SKUs skip the OPC gate: they are our own creations
+        # (2026-08-31 read-skew cohort went straight to Synced via the
+        # activation pass, so no OPC ever backfilled) and a same-SKU
+        # resubmission updates the existing product (OnBuy, 2026-08-29).
+        if sku not in REPAIR_SKUS and (not opc or opc in ("", "PENDING") or (opc_nb and opc == opc_nb)):
             collisions.append((i + 2, sku, listings[sku][:60], "SHARED/NO OPC - " + title[:44]))
             continue
         cat_id = str(r.get("Category ID") or "").strip()
