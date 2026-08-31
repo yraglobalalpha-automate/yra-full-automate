@@ -162,7 +162,11 @@ def main():
     repaired = failed = 0
     for sku, r, _, cat_id in targets:
         digits = re.sub(r"\D", "", sku)
-        ean = str(r.get("EAN") or "").strip() or digits
+        # The SKU's own digits ARE the product code (standing rule,
+        # 2026-07-13). The EAN cell is only a mirror and was the one column
+        # the 08-29 read-skew wrote wrong (neighbour SKUs' digits) - never
+        # trust it over the SKU itself.
+        ean = digits or str(r.get("EAN") or "").strip()
         extra = [u.strip() for u in str(r.get("Additional Images") or "").split(",") if u.strip()]
         try:
             price = float(r.get("Selling Price (£)") or 0) or 0.01
