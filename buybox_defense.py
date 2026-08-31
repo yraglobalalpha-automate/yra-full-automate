@@ -154,17 +154,18 @@ def main():
     # matching overlay, 2026-08-27); a stripped key would never match the
     # live listing and the row would sit NO-COST despite a filled cost.
     _hdrs = [str(h).strip() for h in with_retry(lambda: main_sheet.row_values(1), what="headers", max_attempts=3)]
-    _sku_display = with_retry(lambda: main_sheet.col_values(_hdrs.index("SKU") + 1),
-                              what="sku display col", max_attempts=3)
-    # Mid-read edit guard (see generate_xml.py, 2026-08-29).
+    # Bracketed consistent read (2026-08-31): column read BEFORE and AFTER
+    # the records read must match - the two-reads-after guard missed edits
+    # landing between the records read and the first column read.
     for _stab in range(3):
+        _sku_display = with_retry(lambda: main_sheet.col_values(_hdrs.index("SKU") + 1),
+                                  what="sku display col", max_attempts=3)
+        main_rows = with_retry(lambda: main_sheet.get_all_records(), what="sheet read", max_attempts=3)
         _sku_display_2 = with_retry(lambda: main_sheet.col_values(_hdrs.index("SKU") + 1),
                                     what="sku display recheck", max_attempts=3)
         if _sku_display_2 == _sku_display:
             break
-        print("Sheet changed between reads - re-reading for a consistent snapshot")
-        main_rows = with_retry(lambda: main_sheet.get_all_records(), what="sheet read", max_attempts=3)
-        _sku_display = _sku_display_2
+        print("Sheet changed during the read - re-reading for a consistent snapshot")
     else:
         print("Sheet still being edited after 3 re-reads - aborting this run")
         raise SystemExit(1)

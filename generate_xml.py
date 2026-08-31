@@ -719,37 +719,71 @@ def main():
         notify.send_alert_email("Sheet header row needs fixing", message)
         sys.exit(1)
 
-    data = with_retry(lambda: sheet.get_all_records(),
-                      what="sheet read", max_attempts=3)
-    # Same hygiene on the row dicts (their keys come from the header row).
-    data = [{str(k).strip(): v for k, v in row.items()} for row in data]
-
-    # SKUs are taken from the column's DISPLAYED text, not get_all_records:
-    # numericise turns a pure-digit SKU stored with a leading zero into an
-    # int with the zero stripped, so every by-SKU push targets a SKU OnBuy
-    # doesn't know and defers "Awaiting OnBuy go-live" forever (GTV's 127
-    # census pairs, repaired 2026-08-27, all carried leading-zero SKUs).
-    # Formatting characters are stripped; leading zeros are kept.
-    sku_display = with_retry(lambda: sheet.col_values(col_map["SKU"]),
-                             what="sku display column", max_attempts=3)
-    # Mid-read edit guard: a row inserted/deleted between the records read
-    # and this column read misaligns every SKU below the edit point (a
-    # 4,659-row false shift alarm on 2026-08-29 - and in THIS run it would
-    # push prices under neighbours' SKUs). Two identical consecutive column
-    # reads prove the window was quiet; otherwise re-read everything.
+    # Bracketed consistent read (2026-08-31): the 08-29 guard compared two
+    # column reads taken AFTER the records read, so an edit landing between
+    # the records read and the first column read passed both checks with a
+    # skewed SKU-to-details join - the hole behind the 08-29 wrong-content
+    # creates (34 listings shipped with neighbouring rows' details). The
+    # SKU column is now read BEFORE and AFTER the records read; identical
+    # brackets prove the records read happened in a quiet window. SKUs come
+    # from the column's DISPLAYED text: numericise strips leading zeros
+    # (the 127 census-pair products, repaired 2026-08-25).
     for _stab in range(3):
+        sku_display = with_retry(lambda: sheet.col_values(col_map["SKU"]),
+                                 what="sku display column", max_attempts=3)
+        data = with_retry(lambda: sheet.get_all_records(),
+                          what="sheet read", max_attempts=3)
+        # Same hygiene on the row dicts (their keys come from the header row).
+        data = [{str(k).strip(): v for k, v in row.items()} for row in data]
         _sku_display_2 = with_retry(lambda: sheet.col_values(col_map["SKU"]),
                                     what="sku display column recheck", max_attempts=3)
         if _sku_display_2 == sku_display:
             break
-        logger.warning("Sheet changed between reads - re-reading for a consistent snapshot (attempt %d)", _stab + 1)
-        data = with_retry(lambda: sheet.get_all_records(),
-                          what="sheet read", max_attempts=3)
-        data = [{str(k).strip(): v for k, v in row.items()} for row in data]
-        sku_display = _sku_display_2
+        logger.warning("Sheet changed during the read - re-reading for a consistent snapshot (attempt %d)", _stab + 1)
     else:
         logger.error("Sheet still being edited after 3 re-reads - aborting this run untouched; the next run will retry")
         sys.exit(1)
+
+    def _remap_row_writes(updates, what):
+        """Re-anchors row-addressed cell writes ("AB123") right before a
+        flush. Sheet writes are accumulated against row numbers captured at
+        read time; a team row insert/delete during the run shifts the live
+        rows, so flushing as-is lands each write a few rows off - that is
+        how neighbouring products' details ended up under each other's SKUs
+        on 2026-08-29/31 (34 wrong listings). Each write's row is identified
+        by the SKU that occupied it in the read-time column snapshot and
+        follows that SKU to its current row; a write whose anchor SKU
+        vanished or is duplicated is dropped (redone next run). Returns
+        (updates, rows_shifted_flag)."""
+        fresh = with_retry(lambda: sheet.col_values(col_map["SKU"]),
+                           what="sku column at write time", max_attempts=3)
+        if fresh == sku_display:
+            return updates, False
+        pos = {}
+        for _idx, _val in enumerate(fresh):
+            _key = str(_val).replace(",", "").strip()
+            if _idx and _key:
+                pos.setdefault(_key, []).append(_idx + 1)
+        kept, n_remap, n_drop = [], 0, 0
+        for _u in updates:
+            _rng = str(_u["range"])
+            _head = _rng.rstrip("0123456789")
+            try:
+                _row_n = int(_rng[len(_head):])
+            except ValueError:
+                kept.append(_u)
+                continue
+            _sku = str(sku_display[_row_n - 1]).replace(",", "").strip() if _row_n - 1 < len(sku_display) else ""
+            _tgt = pos.get(_sku) or []
+            if _sku and len(_tgt) == 1:
+                if _tgt[0] != _row_n:
+                    _u = {"range": f"{_head}{_tgt[0]}", "values": _u["values"]}
+                    n_remap += 1
+                kept.append(_u)
+            else:
+                n_drop += 1
+        logger.warning("%s: sheet rows moved during the run - %d write(s) re-anchored to their SKU's current row, %d dropped (redone next run)", what, n_remap, n_drop)
+        return kept, True
     for _i, _row in enumerate(data):
         if _i + 1 < len(sku_display):
             _row["SKU"] = str(sku_display[_i + 1]).replace(",", "").strip()
@@ -1048,6 +1082,8 @@ def main():
                 category_updates.append({"range": f"{col_letter(col_map['Category'])}{i}", "values": [[mapped]]})
                 logger.info("Mapped row %d", i)
         if category_updates:
+            category_updates, _ = _remap_row_writes(category_updates, "category writes")
+        if category_updates:
             sheet.batch_update(category_updates)
 
     updated_count = 0
@@ -1200,6 +1236,8 @@ def main():
                         oos_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_oos]]})
             time.sleep(1.0)
         if oos_updates:
+            oos_updates, _ = _remap_row_writes(oos_updates, "OOS writes")
+        if oos_updates:
             try:
                 with_retry(lambda: sheet.batch_update(
                     [dict(u) for u in oos_updates]), what="OOS sheet update", max_attempts=3)
@@ -1309,6 +1347,8 @@ def main():
                     if "Last OnBuy Sync" in col_map:
                         activation_updates.append({"range": f"{col_letter(col_map['Last OnBuy Sync'])}{i}", "values": [[now_act]]})
             time.sleep(1.0)
+        if activation_updates:
+            activation_updates, _ = _remap_row_writes(activation_updates, "activation writes")
         if activation_updates:
             try:
                 with_retry(lambda: sheet.batch_update(
@@ -1961,6 +2001,9 @@ def main():
         supabase_rows.append(supabase_row)
 
     # ================= APPLY ALL SHEET VALUE UPDATES (one call for the whole run) =================
+    _rows_shifted_at_flush = False
+    if all_sheet_updates:
+        all_sheet_updates, _rows_shifted_at_flush = _remap_row_writes(all_sheet_updates, "run sheet writes")
     if all_sheet_updates:
         # gspread's batch_update() mutates each dict's "range" in place
         # (unconditionally re-qualifying it with the sheet name, even if
@@ -1990,6 +2033,11 @@ def main():
     supabase_rows = dedupe_rows_by_sku(supabase_rows, "Supabase export")
     supabase_ok = supabase_db.upsert_products(supabase_rows)
 
+    if highlight_requests and _rows_shifted_at_flush:
+        # Formatting requests address grid rows directly and cannot be
+        # SKU-remapped - cosmetic, so skip them for this run.
+        logger.warning("Row highlights skipped - sheet rows moved during the run; they re-apply next run")
+        highlight_requests = []
     if highlight_requests:
         try:
             with_retry(
@@ -2010,6 +2058,11 @@ def main():
     # be retried (and re-rejected, re-detected, re-deleted) next run; the
     # reverse order would risk a permanently orphaned Supabase row with no
     # Sheet row left to ever trigger cleaning it up.
+    if rows_to_delete and _rows_shifted_at_flush:
+        # Deleting by stale row numbers would remove the wrong rows - the
+        # same products re-flag and delete cleanly next run.
+        logger.warning("Brand-rejected row deletion skipped - sheet rows moved during the run; redone next run")
+        rows_to_delete = []
     if rows_to_delete:
         supabase_db.delete_products(removed_skus)
         delete_requests = [

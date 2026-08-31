@@ -37,26 +37,65 @@ sheet = client.open("YRA_Full_Feed_Master").sheet1
 
 headers = sheet.row_values(1)
 col_map = {col: idx + 1 for idx, col in enumerate(headers)}
-data = sheet.get_all_records()
-# Displayed SKU text overrides numericise - leading zeros survive (see the
-# matching overlay in generate_xml.py, 2026-08-27).
+# Bracketed consistent read (2026-08-31): the SKU column is read BEFORE and
+# AFTER the records read and must be identical - the 08-29 guard compared
+# two column reads taken after the records read, which missed edits landing
+# between the records read and the first column read (the hole behind the
+# 08-29 wrong-content creates). Leading zeros survive via displayed text.
+_sku_display = []
+for _stab in range(3):
+    _sku_display = sheet.col_values(col_map["SKU"]) if "SKU" in col_map else []
+    data = sheet.get_all_records()
+    if "SKU" not in col_map:
+        break
+    _sku_display_2 = sheet.col_values(col_map["SKU"])
+    if _sku_display_2 == _sku_display:
+        break
+    print("Sheet changed during the read - re-reading for a consistent snapshot")
+else:
+    print("Sheet still being edited after 3 re-reads - aborting; the next hourly run will retry")
+    raise SystemExit(1)
 if "SKU" in col_map:
-    _sku_display = sheet.col_values(col_map["SKU"])
-    # Mid-read edit guard (see generate_xml.py, 2026-08-29): two identical
-    # consecutive column reads prove no edit landed between the reads.
-    for _stab in range(3):
-        _sku_display_2 = sheet.col_values(col_map["SKU"])
-        if _sku_display_2 == _sku_display:
-            break
-        print("Sheet changed between reads - re-reading for a consistent snapshot")
-        data = sheet.get_all_records()
-        _sku_display = _sku_display_2
-    else:
-        print("Sheet still being edited after 3 re-reads - aborting; the next hourly run will retry")
-        raise SystemExit(1)
     for _i, _row in enumerate(data):
         if _i + 1 < len(_sku_display):
             _row["SKU"] = str(_sku_display[_i + 1]).replace(",", "").strip()
+
+
+def _remap_row_writes(updates, what):
+    """Re-anchors row-addressed cell writes right before the flush: each
+    write's row is identified by the SKU that occupied it at read time and
+    follows that SKU to its current row; anchor gone/duplicated -> dropped
+    (redone next hourly run). See generate_xml.py, 2026-08-31 incident."""
+    if "SKU" not in col_map:
+        return updates
+    _fresh = sheet.col_values(col_map["SKU"])
+    if _fresh == _sku_display:
+        return updates
+    _pos = {}
+    for _idx, _val in enumerate(_fresh):
+        _key = str(_val).replace(",", "").strip()
+        if _idx and _key:
+            _pos.setdefault(_key, []).append(_idx + 1)
+    _kept, _n_remap, _n_drop = [], 0, 0
+    for _u in updates:
+        _rng = str(_u["range"])
+        _head = _rng.rstrip("0123456789")
+        try:
+            _row_n = int(_rng[len(_head):])
+        except ValueError:
+            _kept.append(_u)
+            continue
+        _sku = str(_sku_display[_row_n - 1]).replace(",", "").strip() if _row_n - 1 < len(_sku_display) else ""
+        _tgt = _pos.get(_sku) or []
+        if _sku and len(_tgt) == 1:
+            if _tgt[0] != _row_n:
+                _u = {"range": f"{_head}{_tgt[0]}", "values": _u["values"]}
+                _n_remap += 1
+            _kept.append(_u)
+        else:
+            _n_drop += 1
+    print(f"{what}: sheet rows moved during the run - {_n_remap} write(s) re-anchored, {_n_drop} dropped (redone next run)")
+    return _kept
 
 if "Sync Status" not in col_map:
     print("Sheet has no 'Sync Status' column - nothing to check.")
@@ -215,6 +254,8 @@ for sku, entry in found.items():
         supabase_row["Product URL"] = product_url
     supabase_rows.append(supabase_row)
 
+if sheet_updates:
+    sheet_updates = _remap_row_writes(sheet_updates, "backfill writes")
 if sheet_updates:
     sheet.batch_update(sheet_updates)
     print(f"Updated {len(sheet_updates)} sheet cell(s).")

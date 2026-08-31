@@ -77,17 +77,17 @@ def main():
     # the matching overlay in generate_xml.py, 2026-08-27).
     _hdrs = [str(h).strip() for h in sheet.row_values(1)]
     if "SKU" in _hdrs:
-        _sku_display = sheet.col_values(_hdrs.index("SKU") + 1)
-        # Mid-read edit guard (see generate_xml.py, 2026-08-29): an edit
-        # between the two reads misaligns the join - the 4,659-row false
-        # shift alarm this guard exists to prevent.
+        # Bracketed consistent read (2026-08-31): column read BEFORE and
+        # AFTER the records read must match - the two-reads-after guard
+        # missed edits landing between the records read and the first
+        # column read (the hole behind the 08-29 wrong-content creates).
         for _stab in range(3):
+            _sku_display = sheet.col_values(_hdrs.index("SKU") + 1)
+            rows = sheet.get_all_records()
             _sku_display_2 = sheet.col_values(_hdrs.index("SKU") + 1)
             if _sku_display_2 == _sku_display:
                 break
-            print("Sheet changed between reads - re-reading for a consistent snapshot")
-            rows = sheet.get_all_records()
-            _sku_display = _sku_display_2
+            print("Sheet changed during the read - re-reading for a consistent snapshot")
         else:
             print("Sheet still being edited after 3 re-reads - aborting this scan")
             raise SystemExit(1)
