@@ -298,6 +298,53 @@ def sku_numeric_part(sku):
 _NON_BRAND_VALUES = {"branded", "unbranded", "no brand", "none", "n/a", "na", "generic", ""}
 
 
+# A brand block is OnBuy's verdict on one brand on one day, not a life
+# sentence on the row. Rows have sat blocked for weeks on brands the
+# platform was accepting on neighbouring rows the whole time: the verdict was re-read
+# from the Supabase mirror every run, the row was never pushed again to
+# test it, and the mirror is never rewritten for a blocked row - so the
+# skip outlived the refusal with nothing able to clear it. The flag now
+# records WHICH brand was refused and WHEN, and lifts when either stops
+# applying.
+BRAND_BLOCK_RE = re.compile(
+    r"BRAND BLOCKED(?: \((\d{4}-\d{2}-\d{2})\))? - OnBuy says the brand '([^']*)'", re.I)
+BRAND_BLOCK_PHRASE = "supplied brand is owned by another seller"
+BRAND_BLOCK_RETRY_DAYS = int(os.getenv("BRAND_BLOCK_RETRY_DAYS") or "7")
+
+
+def brand_block_state(statuses, brand, today, retry_days=BRAND_BLOCK_RETRY_DAYS):
+    """(skip this row?, the date to stamp on the flag).
+
+    `statuses` are the row's Sync Status values, most trustworthy first -
+    the sheet, which is the only place a blocked row is ever written, then
+    the mirror, which keeps OnBuy's original wording indefinitely. The
+    first flag found decides, so the sheet's dated flag governs and the
+    mirror's undated copy cannot immortalise a skip.
+
+    A block lifts when the Brand cell no longer holds the refused brand,
+    or once the verdict is retry_days old. While it stands, the ORIGINAL
+    date is returned so re-flagging does not keep resetting the clock."""
+    for status in statuses:
+        m = BRAND_BLOCK_RE.search(str(status or ""))
+        if not m:
+            continue
+        stamped, refused = m.group(1), (m.group(2) or "").strip()
+        if refused.casefold() != str(brand or "").strip().casefold():
+            return False, today          # brand corrected since the refusal
+        if not stamped:
+            return True, today           # flag predates the stamp - date it now
+        try:
+            first_seen = datetime.strptime(stamped, "%Y-%m-%d").date()
+        except ValueError:
+            return True, today
+        if (today - first_seen).days >= retry_days:
+            return False, today          # verdict is stale - let OnBuy re-judge
+        return True, first_seen
+    if any(BRAND_BLOCK_PHRASE in str(s or "") for s in statuses):
+        return True, today               # OnBuy's raw refusal, first sighting
+    return False, today
+
+
 def normalize_brand(brand):
     if str(brand).strip().lower() in _NON_BRAND_VALUES:
         return "Unbranded"
@@ -1608,7 +1655,10 @@ def main():
             # User's explicit policy (2026-07-06, superseding the earlier
             # "mark it Unbranded and relist" policy): remove the row entirely
             # instead of relisting it as Unbranded.
-            if "supplied brand is owned by another seller" in last_sync_status:
+            brand_skip, brand_stamp = brand_block_state(
+                (str(row.get("Sync Status") or ""), last_sync_status),
+                brand, datetime.now(PK_TZ).date())
+            if brand_skip:
                 # Policy changed 2026-08-03 (user): FLAG, never delete. The
                 # original delete-the-row rule was written for GTV's rare
                 # one-off rejections; at YRA's volume it silently destroyed
@@ -1616,10 +1666,11 @@ def main():
                 # bounced. The row now stays, turns amber, and stops being
                 # pushed - the team decides to re-source or re-brand.
                 onbuy_brand_blocked += 1
-                brand_alert = (f"BRAND BLOCKED - OnBuy says the brand '{brand}' is owned by "
-                               "another seller, so this product cannot be listed under it. "
-                               "Replace the link with a different product, or correct the Brand cell "
-                               "- the row retries automatically on the next run.")
+                brand_alert = (f"BRAND BLOCKED ({brand_stamp}) - OnBuy says the brand "
+                               f"'{brand}' is owned by another seller, so this product cannot be "
+                               "listed under it. Replace the link with a different product, or "
+                               "correct the Brand cell - the row retries as soon as the brand "
+                               f"changes, and is re-tested anyway after {BRAND_BLOCK_RETRY_DAYS} days.")
                 # Full-auto sheets have no Change Alert column - Sync Status
                 # is where a human looks, so the instruction goes there.
                 all_sheet_updates.append(
