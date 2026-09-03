@@ -19,6 +19,7 @@ import pricing
 import storage
 import supabase_db
 from onbuy_client import OnBuyClient
+import sku_aliases
 from retry_utils import AuthError, PermanentError, RateLimitError, TransientError, raise_for_status, with_retry
 from sanitize import sanitize_description, validate_images, strip_emojis
 
@@ -1176,7 +1177,9 @@ def main():
                     break
                 for _it in _items:
                     _it = _it or {}
-                    _s = str(_it.get("sku") or "").strip()
+                    # Listings held under a corrupted SKU answer under it;
+                    # key the price map by the SKU the sheet uses.
+                    _s = sku_aliases.to_true(_it.get("sku"))
                     if _s:
                         try:
                             _lp[_s] = float(_it.get("price") or 0)

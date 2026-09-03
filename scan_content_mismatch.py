@@ -13,6 +13,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 from onbuy_client import BASE_URL, OnBuyClient
+import sku_aliases
 from retry_utils import with_retry
 
 
@@ -59,7 +60,7 @@ def main():
                 return
         for it in items:
             it = it or {}
-            sku = str(it.get("sku") or "").strip()
+            sku = sku_aliases.to_true(it.get("sku"))
             if sku:
                 listings[sku] = (str(it.get(name_key) or "").strip(),
                                  str(it.get("created_at") or "")[:16])

@@ -39,6 +39,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 import pricing
 from onbuy_client import BASE_URL, OnBuyClient
+import sku_aliases
 from retry_utils import PermanentError, RateLimitError, with_retry
 
 SHEET_NAME = "YRA_Full_Feed_Master"
@@ -102,7 +103,7 @@ def page_listings(onbuy):
             break
         for it in items:
             it = it or {}
-            sku = str(it.get("sku") or "").strip()
+            sku = sku_aliases.to_true(it.get("sku"))
             if sku and sku not in out:
                 try:
                     stock = int(float(it.get("stock") or 0))

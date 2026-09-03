@@ -11,6 +11,7 @@ import os
 
 import requests
 
+import sku_aliases
 from retry_utils import AuthError, PermanentError, raise_for_status, with_retry
 
 logger = logging.getLogger("onbuy_sync")
@@ -162,22 +163,26 @@ class OnBuyClient:
         return with_retry(_do_create, what=f"onbuy create_product({sku})", max_attempts=3)
 
     def update_listing(self, *, sku, price, stock):
+        # Some listings are held under a corrupted SKU (sku_aliases.py); the
+        # wire SKU is the platform's, every log line stays in ours.
+        wire = sku_aliases.to_onbuy(sku)
         payload = {
             "site_id": self.site_id,
             "seller_id": self.seller_id,
-            "listings": [{"sku": sku, "price": price, "stock": stock, "boost_marketing_commission": 0}],
+            "listings": [{"sku": wire, "price": price, "stock": stock, "boost_marketing_commission": 0}],
         }
+        label = sku if wire == sku else f"{sku} as {wire}"
 
         def _do_update():
-            logger.info("OnBuy update_listing(%s) request payload: %s", sku, payload)
-            resp = self._send("PUT", f"{BASE_URL}/listings/by-sku", what=f"onbuy update_listing({sku})", json=payload)
-            logger.info("OnBuy update_listing(%s) raw response [%s]: %s", sku, resp.status_code, resp.text[:2000])
-            raise_for_status(resp, what=f"onbuy update_listing({sku})")
+            logger.info("OnBuy update_listing(%s) request payload: %s", label, payload)
+            resp = self._send("PUT", f"{BASE_URL}/listings/by-sku", what=f"onbuy update_listing({label})", json=payload)
+            logger.info("OnBuy update_listing(%s) raw response [%s]: %s", label, resp.status_code, resp.text[:2000])
+            raise_for_status(resp, what=f"onbuy update_listing({label})")
             body = resp.json()
-            _raise_on_result_error(body, sku, what=f"onbuy update_listing({sku})")
+            _raise_on_result_error(body, wire, what=f"onbuy update_listing({label})")
             return body
 
-        return with_retry(_do_update, what=f"onbuy update_listing({sku})", max_attempts=3)
+        return with_retry(_do_update, what=f"onbuy update_listing({label})", max_attempts=3)
 
 
     def update_listings_by_sku_batch(self, listings):
@@ -190,7 +195,8 @@ class OnBuyClient:
         payload = {
             "site_id": self.site_id,
             "seller_id": self.seller_id,
-            "listings": [{"sku": s, "price": p, "stock": st, "boost_marketing_commission": 0}
+            "listings": [{"sku": sku_aliases.to_onbuy(s), "price": p, "stock": st,
+                          "boost_marketing_commission": 0}
                          for s, p, st in listings],
         }
 
@@ -204,7 +210,13 @@ class OnBuyClient:
             raise_for_status(resp, what="onbuy update_listings_by_sku_batch")
             body = resp.json()
             results = body.get("results") if isinstance(body, dict) else body
-            return results if isinstance(results, list) else []
+            if not isinstance(results, list):
+                return []
+            # Callers key their outcomes off the SKU they passed in.
+            for item in results:
+                if isinstance(item, dict) and item.get("sku") is not None:
+                    item["sku"] = sku_aliases.to_true(item["sku"])
+            return results
 
         return with_retry(_do_batch, what="onbuy update_listings_by_sku_batch", max_attempts=3)
 
@@ -218,6 +230,8 @@ class OnBuyClient:
         skus = [str(s).strip() for s in skus if str(s).strip()]
         if not skus:
             return []
+        # Ask about the SKUs the platform holds (sku_aliases.py), answer in ours.
+        skus = [sku_aliases.to_onbuy(s) for s in skus]
         payload = {"site_id": self.site_id, "skus": skus}
 
         def _do_check():
@@ -228,7 +242,11 @@ class OnBuyClient:
             logger.info("OnBuy check_winning(%d skus) raw response [%s]: %s", len(skus), resp.status_code, resp.text[:1500])
             raise_for_status(resp, what="onbuy check_winning")
             body = resp.json()
-            return body.get("results") if isinstance(body, dict) else body
+            results = body.get("results") if isinstance(body, dict) else body
+            for item in (results if isinstance(results, list) else []):
+                if isinstance(item, dict) and item.get("sku") is not None:
+                    item["sku"] = sku_aliases.to_true(item["sku"])
+            return results
 
         return with_retry(_do_check, what="onbuy check_winning", max_attempts=3)
 
