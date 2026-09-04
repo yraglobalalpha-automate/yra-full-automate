@@ -1,0 +1,55 @@
+name: Watch Recovery (auto-notify)
+
+on:
+  schedule:
+    - cron: "53 */6 * * *"   # every 6h on an unpopular minute (see run.yml)
+  workflow_dispatch: {}
+
+# One check-winning call per 500 baseline SKUs - shares the API quota, so
+# queue behind the sync rather than overlapping it.
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # commits recovery_state.txt when a milestone is announced
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Check recovery
+        env:
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          ALERT_EMAIL_FROM: ${{ vars.ALERT_EMAIL_FROM }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+        run: python watch_recovery.py
+      - name: Persist announced milestone
+        run: |
+          if ! git diff --quiet recovery_state.txt 2>/dev/null; then
+            git config user.name "recovery-watch"
+            git config user.email "actions@github.com"
+            git add recovery_state.txt
+            git commit -m "Recovery watch: milestone announced"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          else
+            echo "no state change"
+          fi
