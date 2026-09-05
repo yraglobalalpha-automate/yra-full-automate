@@ -1,0 +1,56 @@
+name: Attach Missing Listings (one-off)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "yes = report what would be attached without changing anything"
+        required: false
+        default: "yes"
+      limit_skus:
+        description: "Comma-separated SKUs to restrict to (staged verification)"
+        required: false
+        default: ""
+      max_listings:
+        description: "Hard cap per run"
+        required: false
+        default: "1000"
+      skip_probe:
+        description: "yes = skip the live-listings pre-check (only when it is known current)"
+        required: false
+        default: "no"
+
+# Reads live listings and attaches via POST /v2/listings - shares the API
+# quota/token with the sync, so queue behind it (see run.yml).
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Attach
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+          LIMIT_SKUS: ${{ inputs.limit_skus }}
+          MAX_LISTINGS: ${{ inputs.max_listings }}
+          SKIP_PROBE: ${{ inputs.skip_probe }}
+        run: python attach_missing_listings.py
