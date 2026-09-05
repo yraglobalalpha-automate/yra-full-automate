@@ -1,0 +1,31 @@
+name: Status By SKU (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      skus:
+        description: "Comma-separated SKUs to report on"
+        required: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Report
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SKUS: ${{ inputs.skus }}
+        run: python status_by_sku.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: status-by-sku
+          path: status_by_sku.csv
+          if-no-files-found: warn
