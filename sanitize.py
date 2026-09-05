@@ -174,6 +174,122 @@ _SELLER_TOPICS = (
 _SELLER_TOPIC_RE = re.compile(
     r"(?i)[^.!?\n<>]*\b(?:" + _SELLER_TOPICS + r")\b[^.!?\n<>]*[.!?]?")
 
+# ---- shape rules (2026-09-05) ---------------------------------------------
+# Everything above is a blocklist of wording already seen, and every new
+# seller template walked straight past it: a sweep of GTV found 1,772 of
+# 5,465 descriptions still carrying store menus, prices, returns policy and
+# copyright footers (rows 5807-5845, one seller's template, were the report).
+# These rules target the SHAPE of seller talk rather than its words. Policy
+# (user, restated 2026-09-05): a description holds product content and
+# nothing else - no prices, no store navigation, no shipping or returns
+# terms, no links, no seller branding. A "sentence" here is a run between
+# sentence punctuation, newlines or tags, same as the topic rule.
+# A "." between two digits is a decimal point, not a full stop: "GBP 20.99"
+# must stay one segment, or the money rule leaves a stray "99" behind.
+_SEG = r"(?:[^.!?\n<>]|(?<=\d)\.(?=\d))*"
+
+# 1. First-person seller voice. Specs are written in the third person; "we",
+#    "our" and "us" are the seller talking about their shop. "us" must stay
+#    lowercase-only: "US plug" and "US size" are specs.
+_FIRST_PERSON_RE = re.compile(
+    r"(?i)" + _SEG + r"\b(?:we|we're|we've|we'll|we'd|our|ours)\b" + _SEG + r"[.!?]?")
+_FIRST_PERSON_US_RE = re.compile(_SEG + r"\bus\b" + _SEG + r"[.!?]?")
+
+# 2. Second-person policy talk. "you can enjoy 10 hours of playback" is
+#    marketing copy and stays; "your item will be returned to you" is a
+#    returns policy and goes. The sentence has to carry BOTH a "you" and a
+#    commerce word.
+_POLICY_WORDS = (
+    r"items?|orders?|goods|parcels?|purchases?|return\w*|refund\w*|receiv\w*|receie\w*|"
+    r"contact|message|feedback|dispatch\w*|deliver(?:y|ies|ed)|ship(?:ping|ped|s)?|"
+    r"payments?|pay|cancel\w*|claims?|faults?|faulty|packaging|seals?|sealed|unopened|"
+    r"unused|deduction|exchanges?|invoice|tracking|courier|postage|"
+    r"within \d+ (?:working |calendar |business )?(?:days?|hours?)"
+)
+_YOU = r"\b(?:you|your|you're|you've|you'll)\b"
+_SECOND_PERSON_POLICY_RE = re.compile(
+    r"(?i)(?:" + _SEG + _YOU + _SEG + r"\b(?:" + _POLICY_WORDS + r")\b" + _SEG +
+    r"|" + _SEG + r"\b(?:" + _POLICY_WORDS + r")\b" + _SEG + _YOU + _SEG + r")[.!?]?")
+
+# 3. Money. A price never belongs in a spec. "5.0GBPS" is a data rate, not
+#    pounds, so GBP needs a word boundary on both sides.
+_MONEY = (r"(?:(?:[£€$]|&pound;|&euro;|&#163;)\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?(?:£|€|\bGBP\b|\bUSD\b|\bEUR\b)|"
+          r"\bGBP\s?\d|\d+\s?%\s?(?:off|deduction|discount)|save\s+[£€$])")
+_MONEY_RE = re.compile(r"(?i)" + _SEG + _MONEY + _SEG + r"[.!?]?")
+
+# 4. Footers and template branding.
+_FOOTER_RE = re.compile(
+    r"(?i)" + _SEG + r"(?:all rights reserved|©|&copy;|\(c\)\s*(?:19|20)\d\d|copyright|"
+    r"powered by|designed by|template by|built with|created with|listing (?:template|designer))"
+    + _SEG + r"[.!?]?")
+
+# 5. The seller's story about themselves, in any person.
+_STORY_RE = re.compile(
+    r"(?i)" + _SEG + r"(?:competitive prices?|affordable prices?|latest in brand[- ]name|"
+    r"located in|established (?:in|since)|family[- ]run|years of experience|"
+    r"go[- ]to supplier|high street stores?|online retailers?|trusted seller|top[- ]rated|"
+    r"leading (?:supplier|retailer|seller|provider)|(?:uk|europe)'?s? largest|"
+    r"(?:happy|satisfied) (?:customers|clients)|shopping experience|do more business|"
+    r"opportunity to resolve|they offer the latest|portfolio of brands|brands such as|"
+    r"peace of mind|direct relationships|(?:our|their) customers)" + _SEG + r"[.!?]?")
+
+# 5b. Returns / delivery policy prose in any voice. These are the words a
+#     policy is made of and a spec is not: "unopened in the original retail
+#     packaging", "subject to a deduction", "if the item develops a fault".
+_POLICY_RE = re.compile(
+    r"(?i)" + _SEG + r"(?:this policy|policy does not apply|returned|unopened|unused items?|"
+    r"retail packaging|original packaging|manufacturers?'? seal|seal (?:still )?intact|"
+    r"seal broken|tampered|subject to a|deduction|refund\w*|faulty|manufacturer fault|"
+    r"develops a fault|incorrect item|wrong item|missing item|not received|"
+    r"receie?ved (?:the|your|an)|changed your mind|goods (?:are|were|is) (?:found|returned)|"
+    r"the goods|hygiene reasons|tried on|not exhaustive|calendar days|working days|"
+    r"within \d+ days|damaged (?:in transit|on arrival)|proof of purchase|\bpaid for\b|"
+    r"right to withdraw|items? back|accept(?:ed)? items|non-?returnable|completed orders|"
+    r"orders? (?:placed|received|dispatched)|all goods|goods are|\(weekdays\)|opening hours|"
+    r"responsibilit(?:y|ies)|liabilit(?:y|ies)|accidental(?:ly)? damaged?|customer damaged|"
+    r"click\s*(?:&|&amp;|and)\s*collect|\bunfortunately\b|your chosen|hygiene|"
+    r"\d{1,2}(?:[.:]\d{2})?\s*(?:am|pm)\b|"
+    r"\d{1,2}(?:[.:]\d{2})?\s*(?:am|pm)\b\s*[-–]|"
+    r"\b(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\s*[-–]\s*(?:mon|tue|wed|thu|fri|sat|sun))" + _SEG + r"[.!?]?")
+
+# 5c. A short line that is just a name with a registered/trade mark on it is
+#     the seller signing off, not a spec ("Total Digital Stores®.").
+_TAGLINE_RE = re.compile(
+    r"(?i)(?:^|(?<=[>.!?\n]))\s*(?:[A-Za-z&'\-]+\s+){0,6}[A-Za-z&'\-]+\s*(?:<[^>]+>\s*)*(?:®|™|&reg;|&trade;)\s*(?:<[^>]+>\s*)*[.!?]?")
+
+# 6. Store navigation labels: tab strips ("PaymentShippingReturnsContact Us"
+#    once the tags are gone), category menus and stock banners.
+_NAV_WORDS = (r"Payment|Shipping|Delivery|Returns?|Refunds?|Contact\s*Us|About\s*Us|FAQs?|"
+              r"Store\s*Home|Home\s*Page|Shop\s*(?:Categor(?:y|ies)|Now|All)|Store\s*Categor(?:y|ies)|"
+              r"Other\s*Hot\s*Items?|Hot\s*Items?|Best\s*Sellers?|New\s*Arrivals|Featured\s*Products?|"
+              r"UK\s*STOCK|In\s*Stock|Fast\s*(?:Delivery|Dispatch|Shipping)|"
+              r"Free\s*(?:UK\s*)?(?:Delivery|Shipping|Postage|Returns)|Add\s*to\s*Favou?rites?")
+_NAV_STRIP_RE = re.compile(r"(?:" + _NAV_WORDS + r"){2,}")        # concatenated tab labels
+_NAV_LABEL_RE = re.compile(r"(?i)(?<![A-Za-z])(?:" + _NAV_WORDS + r")(?![A-Za-z])")
+
+# 7. Cross-sell blocks sit at the bottom: from the heading onward it is other
+#    products and their prices, never this product's content.
+_CROSS_SELL_RE = re.compile(
+    r"(?i)\b(?:other hot items?|you may (?:also )?like|similar (?:items|products)|"
+    r"related (?:items|products)|customers (?:also|who) (?:bought|viewed|purchased)|"
+    r"more (?:items|products) from|recommended (?:items|products|accessories)|"
+    r"check out our|see also|frequently bought together)\b")
+
+_RULER_RE = re.compile(r"(?:[_\-—–=~*]|&mdash;|&ndash;){4,}")
+_EMPTYISH = r"(?:&nbsp;|&#160;|\s|[.,;:!?\-–—_*])*"
+
+
+def _cut_cross_sell(text):
+    """Truncate at the first cross-sell heading once past a third of the
+    text; earlier than that it is more likely a stray label, so only the
+    heading itself is dropped."""
+    m = _CROSS_SELL_RE.search(text)
+    if not m:
+        return text
+    if m.start() > len(text) * 0.3:
+        return text[:m.start()]
+    return text[:m.start()] + text[m.end():]
+
 
 
 # bleach's strip=True unwraps disallowed tags but keeps their *text* content -
@@ -221,6 +337,9 @@ def sanitize_description(html, limit=45000):
 
     # Remove seller-boilerplate sentences the tag-level cleaning can't catch
     # since they're plain text, not markup.
+    # Non-breaking spaces arrive as entities and defeat every "\s" in the
+    # rules below; they carry no meaning, so make them plain spaces first.
+    cleaned = re.sub(r"(?:&nbsp;|&#160;|\xa0)", " ", cleaned)
     cleaned = _strip_nav_menus(cleaned)
     cleaned = _NOISE_RE.sub("", cleaned)
     cleaned = _RETAIL_TEMPLATE_RE.sub("", cleaned)
@@ -228,11 +347,34 @@ def sanitize_description(html, limit=45000):
     # blocklist then only mops up non-sentence banner fragments.
     cleaned = _SELLER_TOPIC_RE.sub("", cleaned)
     cleaned = _TEMPLATE_JUNK_RE.sub("", cleaned)
+    # Shape rules (see above): navigation strips and cross-sell tails first,
+    # so their product names and prices never reach the sentence rules as
+    # if they were this product's content; then money, footers, the
+    # seller's story, and finally the voice rules.
+    cleaned = _NAV_STRIP_RE.sub(" ", cleaned)
+    cleaned = _cut_cross_sell(cleaned)
+    cleaned = _MONEY_RE.sub("", cleaned)
+    cleaned = _FOOTER_RE.sub("", cleaned)
+    cleaned = _STORY_RE.sub("", cleaned)
+    cleaned = _POLICY_RE.sub("", cleaned)
+    cleaned = _TAGLINE_RE.sub("", cleaned)
+    cleaned = _FIRST_PERSON_RE.sub("", cleaned)
+    cleaned = _FIRST_PERSON_US_RE.sub("", cleaned)
+    cleaned = _SECOND_PERSON_POLICY_RE.sub("", cleaned)
+    cleaned = _NAV_LABEL_RE.sub(" ", cleaned)
+    cleaned = _RULER_RE.sub(" ", cleaned)
+    # Debris the sentence rules leave behind: runs of bare punctuation where
+    # deleted sentences used to sit, and tags now holding only punctuation.
+    cleaned = re.sub(r"(?:\s*[,;:\-–—]\s*){2,}", " ", cleaned)
+    cleaned = re.sub(r"(?<=>)\s*[,;:\-–—.]+\s*(?=<)", "", cleaned)
+    cleaned = re.sub(r"\s+([,.;:])", r"\1", cleaned)
     # Menu leftovers: one-word navigation bullets and the tags emptied by
     # the junk removal (run twice so lists emptied of items collapse too).
     cleaned = re.sub(r"(?i)<li>\s*(?:Feedback|Returns|Contact(?: Us)?|Our Store|Menu|Home|Shop)\s*</li>", "", cleaned)
-    for _ in range(2):
-        cleaned = re.sub(r"<(li|p|ul|ol|b|strong|i|em)>[\s.,;:!?-]*</\1>", "", cleaned)
+    for _ in range(3):
+        cleaned = re.sub(r"<(li|p|ul|ol|b|strong|i|em)>" + _EMPTYISH + r"</\1>", "", cleaned)
+    cleaned = re.sub(r"(?:\s*<br\s*/?>\s*){2,}", "<br>", cleaned)
+    cleaned = re.sub(r"(?:&nbsp;|&#160;)(?:\s*(?:&nbsp;|&#160;))+", " ", cleaned)
     cleaned = _EMOJI_RE.sub("", cleaned)
 
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)

@@ -1,0 +1,36 @@
+name: Resanitize Sheet Descriptions (one-off)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "yes = report what would change without writing"
+        required: false
+        default: "yes"
+      max_rows:
+        description: "Cap the number of rows rewritten this pass (0 = all)"
+        required: false
+        default: "0"
+
+# Writes the sheet the sync also writes - queue behind it (see run.yml).
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  resanitize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Resanitize
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+          MAX_ROWS: ${{ inputs.max_rows }}
+        run: python resanitize_sheet.py
