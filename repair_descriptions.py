@@ -51,20 +51,26 @@ SELECT_MARKED = (os.getenv("SELECT_MARKED") or "1").strip().lower() not in ("0",
 # CSV-era rows never had an OPC written to the sheet or mirror, so keying on
 # stored OPCs misses most of the catalogue (YRA: 1,359 of ~8k live, 2026-08-23).
 USE_LISTINGS_OPC = (os.getenv("USE_LISTINGS_OPC") or "0").strip().lower() in ("1", "yes", "true")
+# Restrict to named SKUs (staged verification: the rows the team flagged
+# go first, and the marker gate does not apply to a row someone named).
+LIMIT_SKUS = {s.strip() for s in (os.getenv("LIMIT_SKUS") or "").split(",") if s.strip()}
 
 
 def listings_opc_map(onbuy):
-    from retry_utils import with_retry as _wr
     out, offset, limit = {}, 0, 100
     while True:
         def _page(off=offset):
             r = onbuy._send("GET", f"{BASE_URL}/listings", what="listings page",
                             params={"site_id": onbuy.site_id, "limit": limit, "offset": off}, timeout=60)
-            r.raise_for_status()
+            # The project's classifier, not requests': r.raise_for_status()
+            # raises requests.HTTPError, which with_retry has no clause for,
+            # so the retry below could never actually fire on the 500s it
+            # was written for (2026-08-24 comment, still true until now).
+            raise_for_status(r, what="listings page")
             return r
         # OnBuy's listings endpoint 500s intermittently mid-pagination
         # (killed 3 of 7 re-push pages, 2026-08-24) - retry each page.
-        body = _wr(_page, what=f"listings page {offset}", max_attempts=4).json()
+        body = with_retry(_page, what=f"listings page {offset}", max_attempts=4).json()
         items = body.get("results") if isinstance(body, dict) else body
         if not isinstance(items, list) or not items:
             break
@@ -116,10 +122,13 @@ def main():
         if not clean.strip():
             skipped_empty += 1
             continue
+        sku = str(r.get("SKU") or "").strip()
+        if LIMIT_SKUS and sku not in LIMIT_SKUS:
+            continue
         marked = any(m in raw.lower() for m in _JUNK_MARKERS)
         if marked:
             had_junk += 1
-        if SELECT_MARKED and not marked:
+        if SELECT_MARKED and not marked and not LIMIT_SKUS:
             continue
         updates.append({"opc": opc, "description": clean,
                         "_sku": str(r.get("SKU") or "")})
@@ -136,17 +145,26 @@ def main():
 
     ok = errors = 0
     error_samples = []
-    for i in range(0, len(updates), CHUNK):
-        chunk = [{"opc": u["opc"], "description": u["description"]}
-                 for u in updates[i:i + CHUNK]]
-        def _do(payload={"site_id": onbuy.site_id, "seller_id": onbuy.seller_id,
-                         "products": chunk}):
+    poison = []
+
+    def _push(products):
+        """One batch. Uses the project's classifier, NOT requests'
+        raise_for_status: the latter raises requests.HTTPError, which
+        with_retry does not recognise, so a single 500 from the platform
+        used to abort the whole run and lose every remaining chunk
+        (2026-09-07, chunk at offset 4500)."""
+        def _do():
             resp = onbuy._send("PUT", f"{BASE_URL}/products",
-                               what="products update batch", json=payload, timeout=60)
-            resp.raise_for_status()
+                               what="products update batch",
+                               json={"site_id": onbuy.site_id, "seller_id": onbuy.seller_id,
+                                     "products": products},
+                               timeout=60)
+            raise_for_status(resp, what="products update batch")
             return resp.json()
-        from retry_utils import with_retry
-        body = with_retry(_do, what="products update batch", max_attempts=3)
+        return with_retry(_do, what="products update batch", max_attempts=3)
+
+    def _tally(body, products):
+        nonlocal ok, errors
         results = body.get("results") if isinstance(body, dict) else None
         if isinstance(results, list):
             for item in results:
@@ -158,13 +176,41 @@ def main():
                 else:
                     ok += 1
         else:
-            ok += len(chunk)
+            ok += len(products)
+
+    def _push_split(products, depth=0):
+        """Retry a batch the platform keeps rejecting by halving it, so one
+        product that makes their endpoint 500 costs only itself instead of
+        the 50 it travelled with. At size 1 the OPC is recorded and skipped."""
+        try:
+            _tally(_push(products), products)
+            return
+        except (TransientError, PermanentError) as exc:
+            if len(products) == 1:
+                poison.append(products[0]["opc"])
+                logger.warning("OPC %s rejected on its own (%s) - skipped",
+                               products[0]["opc"], str(exc)[:120])
+                return
+            half = len(products) // 2
+            logger.warning("batch of %d rejected (%s) - splitting", len(products), str(exc)[:100])
+            time.sleep(2)
+            _push_split(products[:half], depth + 1)
+            time.sleep(2)
+            _push_split(products[half:], depth + 1)
+
+    for i in range(0, len(updates), CHUNK):
+        chunk = [{"opc": u["opc"], "description": u["description"]}
+                 for u in updates[i:i + CHUNK]]
+        _push_split(chunk)
         logger.info("chunk %d-%d pushed", i + 1, i + len(chunk))
         time.sleep(2)
 
-    logger.info("DONE: %d description updates accepted, %d per-item errors", ok, errors)
+    logger.info("DONE: %d description updates accepted, %d per-item errors, "
+                "%d skipped as unpushable", ok, errors, len(poison))
     for e in error_samples:
         logger.info("  error sample: %s", e)
+    if poison:
+        logger.info("  OPCs the platform refused individually: %s", ", ".join(poison[:40]))
     if errors:
         sys.exit(1)
 
