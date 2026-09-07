@@ -34,3 +34,9 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
           MAX_ROWS: ${{ inputs.max_rows }}
         run: python resanitize_sheet.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: descriptions-for-review
+          path: descriptions_for_review.csv
+          if-no-files-found: warn

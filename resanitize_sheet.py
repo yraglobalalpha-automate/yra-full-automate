@@ -16,6 +16,7 @@ rule the sync uses). A description the sanitizer would empty entirely is
 REPORTED, never written - that is a row for a human to look at, not a cell
 to blank. DRY_RUN=1 (default) reports only; MAX_ROWS caps a pass.
 """
+import csv
 import json
 import os
 import re
@@ -29,6 +30,8 @@ SHEET_NAME = os.getenv("SHEET_NAME") or "YRA_Full_Feed_Master"
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
 MAX_ROWS = int(os.getenv("MAX_ROWS") or "0")          # 0 = no cap
 MIN_KEEP = 20                                          # chars; below this we call it "emptied"
+REVIEW_OUT = "descriptions_for_review.csv"
+ACCOUNT = os.getenv("ACCOUNT") or SHEET_NAME.replace("_Feed_Master", "").replace("_Full", "")
 
 
 def col_letter(n):
@@ -74,6 +77,25 @@ def main():
     print(f"descriptions: {untouched + len(changed) + len(emptied)} filled | "
           f"already clean: {untouched} | would change: {len(changed)} | "
           f"would empty (NOT written, review): {len(emptied)}")
+
+    # The emptied rows are the ONLY ones a person has to deal with, so write
+    # them out with enough context to act: what the row sells, where it came
+    # from, and the junk text that is all the description currently holds.
+    if emptied:
+        idx = {h.strip().lower(): i for i, h in enumerate(headers)}
+        def cell(r, name):
+            i = idx.get(name.lower())
+            row = values[r - 1]
+            return (row[i] if i is not None and i < len(row) else "").strip()
+        with open(REVIEW_OUT, "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.writer(fh)
+            w.writerow(["account", "row", "sku", "title", "supplier_url", "sync_status",
+                        "opc", "current_description_chars", "current_description"])
+            for r, sku, n in emptied:
+                w.writerow([ACCOUNT, r, sku, cell(r, "Title"), cell(r, "Supplier URL"),
+                            cell(r, "Sync Status")[:60], cell(r, "OPC"), n,
+                            re.sub(r"\s+", " ", cell(r, "Description"))[:2000]])
+        print(f"wrote {REVIEW_OUT} ({len(emptied)} row(s) for a human)")
     for r, sku, old, new in changed[:12]:
         print(f"   row {r} {sku}: {len(old)} -> {len(new)} chars")
     for r, sku, n in emptied[:20]:
