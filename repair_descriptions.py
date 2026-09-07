@@ -18,6 +18,7 @@ import time
 import requests
 
 from onbuy_client import BASE_URL, OnBuyClient
+from retry_utils import PermanentError, TransientError, raise_for_status, with_retry
 from sanitize import sanitize_description
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
