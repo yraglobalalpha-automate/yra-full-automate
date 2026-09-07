@@ -9,11 +9,43 @@ so only genuine "the item is gone" signals ever zero out a listing.
 """
 import logging
 import random
+import re
 import time
 
 import requests
 
 logger = logging.getLogger("onbuy_sync")
+
+# Google Sheets answers 503 "service is currently unavailable" often enough to
+# matter: 6 of GTV's last 30 scheduled syncs died on one, and Arden, OpenMaal
+# and YRA the same way (2026-09-06). gspread raises its OWN APIError, which is
+# neither TransientError nor a requests exception, so with_retry could not see
+# it and the run crashed on the very first sheet call - usually client.open(),
+# before a single row was read. Classify its retryable statuses here instead.
+try:  # gspread is always installed in the pipeline; keep import failure harmless
+    from gspread.exceptions import APIError as _GspreadAPIError
+except Exception:  # pragma: no cover - only when gspread is absent
+    _GspreadAPIError = None
+
+_RETRYABLE_SHEET_STATUS = {429, 500, 502, 503, 504}
+
+
+def _sheet_status(exc):
+    """The HTTP status behind a gspread APIError, or None if not one/unknown."""
+    if _GspreadAPIError is None or not isinstance(exc, _GspreadAPIError):
+        return None
+    resp = getattr(exc, "response", None)
+    code = getattr(resp, "status_code", None)
+    if code:
+        return code
+    # Older gspread wraps the payload in args[0] as {"code": 503, ...}
+    arg = exc.args[0] if exc.args else None
+    if isinstance(arg, dict):
+        code = arg.get("code") or (arg.get("error") or {}).get("code")
+        if isinstance(code, int):
+            return code
+    match = re.search(r"\[(\d{3})\]", str(exc))
+    return int(match.group(1)) if match else None
 
 
 class TransientError(Exception):
@@ -82,5 +114,16 @@ def with_retry(fn, *args, what="request", max_attempts=4, base_delay=2.0, max_de
                 break
             delay = min(base_delay * (2 ** (attempt - 1)), max_delay) + random.uniform(0, 1)
             logger.warning("%s: network error (%s), retrying in %.1fs (attempt %d/%d)", what, exc, delay, attempt, max_attempts)
+            time.sleep(delay)
+        except Exception as exc:  # noqa: BLE001 - narrowed immediately below
+            status = _sheet_status(exc)
+            if status not in _RETRYABLE_SHEET_STATUS:
+                raise  # a real sheet error (404, 403, malformed range) must not retry
+            last_exc = exc
+            if attempt >= max_attempts:
+                break
+            delay = min(base_delay * (2 ** (attempt - 1)), max_delay) + random.uniform(0, 1)
+            logger.warning("%s: Google Sheets %s, retrying in %.1fs (attempt %d/%d)",
+                           what, status, delay, attempt, max_attempts)
             time.sleep(delay)
     raise last_exc
