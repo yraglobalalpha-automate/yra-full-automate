@@ -219,6 +219,7 @@ _SECOND_PERSON_POLICY_RE = re.compile(
 _MONEY = (r"(?:(?:[£€$]|&pound;|&euro;|&#163;)\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?(?:£|€|\bGBP\b|\bUSD\b|\bEUR\b)|"
           r"\bGBP\s?\d|\d+\s?%\s?(?:off|deduction|discount)|save\s+[£€$])")
 _MONEY_RE = re.compile(r"(?i)" + _SEG + _MONEY + _SEG + r"[.!?]?")
+_MONEY_ANCHOR_RE = re.compile(r"(?i)" + _MONEY)
 
 # 4. Footers and template branding.
 _FOOTER_RE = re.compile(
@@ -291,11 +292,54 @@ _EMPTYISH = r"(?:&nbsp;|&#160;|\s|[.,;:!?\-–—_*])*"
 # is the whole description, so refuse to delete it.
 _MAX_SENTENCE = int(os.getenv("SANITIZE_MAX_SENTENCE") or "300")
 
+# A "sentence" to these rules is a run between the characters _SEG refuses
+# to cross, and a match spans a whole run, so applying a rule run by run
+# gives the same result as applying it to the whole text - the one
+# exception being an anchor that itself straddles a line break ("20%\noff",
+# "GBP\n20"), which no longer counts, and that reading is the intended one.
+# Run by run is also the difference between hours and seconds: the regex
+# engine re-scans an anchor-free run from every character in it, so one
+# 5,000-character unpunctuated spec run cost the policy rule 44 seconds,
+# and a sheet of them turned a clean-up pass into a 3-4 hour job (YRA and
+# Arden, 2026-09-05..08). A long run under a capped rule is skipped
+# outright (any match would exceed the cap and be kept anyway), and an
+# uncapped rule only runs on a run that contains its anchor.
+_RUN_BREAK_RE = re.compile(r"[.!?\n<>]")
 
-def _sub_sentences(rx, text, max_len=None):
-    """rx.sub, but a match longer than max_len is left in place."""
+
+def _runs(text):
+    """The pieces the sentence rules work on: each run with its sentence
+    terminator attached, and each newline or tag bracket on its own."""
+    start = 0
+    for m in _RUN_BREAK_RE.finditer(text):
+        i = m.start()
+        ch = text[i]
+        if ch == "." and 0 < i < len(text) - 1 and text[i - 1].isdecimal() and text[i + 1].isdecimal():
+            continue                     # a decimal point stays inside its run, as in _SEG
+        if ch in ".!?":
+            yield text[start:i + 1]
+        else:
+            if i > start:
+                yield text[start:i]
+            yield ch
+        start = i + 1
+    if start < len(text):
+        yield text[start:]
+
+
+def _sub_sentences(rx, text, max_len=None, needs=None):
+    """rx.sub, but a match longer than max_len is left in place (max_len=0:
+    no cap); a run that lacks `needs` (the rule's anchor) is passed through
+    without running rx at all."""
     limit = _MAX_SENTENCE if max_len is None else max_len
-    return rx.sub(lambda m: m.group(0) if len(m.group(0)) > limit else "", text)
+    out = []
+    for piece in _runs(text):
+        if piece in ("\n", "<", ">") or (limit and len(piece) > limit) or \
+                (needs is not None and not needs.search(piece)):
+            out.append(piece)
+        else:
+            out.append(rx.sub(lambda m: m.group(0) if limit and len(m.group(0)) > limit else "", piece))
+    return "".join(out)
 
 
 def _cut_cross_sell(text):
@@ -372,7 +416,7 @@ def sanitize_description(html, limit=45000):
     # seller's story, and finally the voice rules.
     cleaned = _NAV_STRIP_RE.sub(" ", cleaned)
     cleaned = _cut_cross_sell(cleaned)
-    cleaned = _MONEY_RE.sub("", cleaned)
+    cleaned = _sub_sentences(_MONEY_RE, cleaned, max_len=0, needs=_MONEY_ANCHOR_RE)
     cleaned = _sub_sentences(_FOOTER_RE, cleaned)
     cleaned = _sub_sentences(_STORY_RE, cleaned)
     cleaned = _sub_sentences(_POLICY_RE, cleaned)
