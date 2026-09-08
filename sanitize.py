@@ -174,6 +174,7 @@ _SELLER_TOPICS = (
 )
 _SELLER_TOPIC_RE = re.compile(
     r"(?i)[^.!?\n<>]*\b(?:" + _SELLER_TOPICS + r")\b[^.!?\n<>]*[.!?]?")
+_SELLER_TOPIC_NEEDS = re.compile(r"(?i)\b(?:" + _SELLER_TOPICS + r")\b")
 
 # ---- shape rules (2026-09-05) ---------------------------------------------
 # Everything above is a blocklist of wording already seen, and every new
@@ -192,9 +193,11 @@ _SEG = r"(?:[^.!?\n<>]|(?<=\d)\.(?=\d))*"
 # 1. First-person seller voice. Specs are written in the third person; "we",
 #    "our" and "us" are the seller talking about their shop. "us" must stay
 #    lowercase-only: "US plug" and "US size" are specs.
-_FIRST_PERSON_RE = re.compile(
-    r"(?i)" + _SEG + r"\b(?:we|we're|we've|we'll|we'd|our|ours)\b" + _SEG + r"[.!?]?")
+_FIRST_PERSON_WORDS = r"\b(?:we|we're|we've|we'll|we'd|our|ours)\b"
+_FIRST_PERSON_RE = re.compile(r"(?i)" + _SEG + _FIRST_PERSON_WORDS + _SEG + r"[.!?]?")
+_FIRST_PERSON_NEEDS = re.compile(r"(?i)" + _FIRST_PERSON_WORDS)
 _FIRST_PERSON_US_RE = re.compile(_SEG + r"\bus\b" + _SEG + r"[.!?]?")
+_FIRST_PERSON_US_NEEDS = re.compile(r"\bus\b")
 
 # 2. Second-person policy talk. "you can enjoy 10 hours of playback" is
 #    marketing copy and stays; "your item will be returned to you" is a
@@ -213,6 +216,7 @@ _YOU = r"\b(?:you|your|you're|you've|you'll)\b"
 _SECOND_PERSON_POLICY_RE = re.compile(
     r"(?i)(?:" + _SEG + _YOU + _SEG + r"\b(?:" + _POLICY_WORDS + r")\b" + _SEG +
     r"|" + _SEG + r"\b(?:" + _POLICY_WORDS + r")\b" + _SEG + _YOU + _SEG + r")[.!?]?")
+_SECOND_PERSON_NEEDS = re.compile(r"(?i)" + _YOU)
 
 # 3. Money. A price never belongs in a spec. "5.0GBPS" is a data rate, not
 #    pounds, so GBP needs a word boundary on both sides.
@@ -222,26 +226,29 @@ _MONEY_RE = re.compile(r"(?i)" + _SEG + _MONEY + _SEG + r"[.!?]?")
 _MONEY_ANCHOR_RE = re.compile(r"(?i)" + _MONEY)
 
 # 4. Footers and template branding.
-_FOOTER_RE = re.compile(
-    r"(?i)" + _SEG + r"(?:all rights reserved|©|&copy;|\(c\)\s*(?:19|20)\d\d|copyright|"
-    r"powered by|designed by|template by|built with|created with|listing (?:template|designer))"
-    + _SEG + r"[.!?]?")
+_FOOTER_WORDS = (
+    r"(?:all rights reserved|©|&copy;|\(c\)\s*(?:19|20)\d\d|copyright|"
+    r"powered by|designed by|template by|built with|created with|listing (?:template|designer))")
+_FOOTER_RE = re.compile(r"(?i)" + _SEG + _FOOTER_WORDS + _SEG + r"[.!?]?")
+_FOOTER_NEEDS = re.compile(r"(?i)" + _FOOTER_WORDS)
 
 # 5. The seller's story about themselves, in any person.
-_STORY_RE = re.compile(
-    r"(?i)" + _SEG + r"(?:competitive prices?|affordable prices?|latest in brand[- ]name|"
+_STORY_WORDS = (
+    r"(?:competitive prices?|affordable prices?|latest in brand[- ]name|"
     r"located in|established (?:in|since)|family[- ]run|years of experience|"
     r"go[- ]to supplier|high street stores?|online retailers?|trusted seller|top[- ]rated|"
     r"leading (?:supplier|retailer|seller|provider)|(?:uk|europe)'?s? largest|"
     r"(?:happy|satisfied) (?:customers|clients)|shopping experience|do more business|"
     r"opportunity to resolve|they offer the latest|portfolio of brands|brands such as|"
-    r"peace of mind|direct relationships|(?:our|their) customers)" + _SEG + r"[.!?]?")
+    r"peace of mind|direct relationships|(?:our|their) customers)")
+_STORY_RE = re.compile(r"(?i)" + _SEG + _STORY_WORDS + _SEG + r"[.!?]?")
+_STORY_NEEDS = re.compile(r"(?i)" + _STORY_WORDS)
 
 # 5b. Returns / delivery policy prose in any voice. These are the words a
 #     policy is made of and a spec is not: "unopened in the original retail
 #     packaging", "subject to a deduction", "if the item develops a fault".
-_POLICY_RE = re.compile(
-    r"(?i)" + _SEG + r"(?:this policy|policy does not apply|returned|unopened|unused items?|"
+_POLICY_PROSE = (
+    r"(?:this policy|policy does not apply|returned|unopened|unused items?|"
     r"retail packaging|original packaging|manufacturers?'? seal|seal (?:still )?intact|"
     r"seal broken|tampered|subject to a|deduction|refund\w*|faulty|manufacturer fault|"
     r"develops a fault|incorrect item|wrong item|missing item|not received|"
@@ -254,7 +261,9 @@ _POLICY_RE = re.compile(
     r"click\s*(?:&|&amp;|and)\s*collect|\bunfortunately\b|your chosen|hygiene|"
     r"\d{1,2}(?:[.:]\d{2})?\s*(?:am|pm)\b|"
     r"\d{1,2}(?:[.:]\d{2})?\s*(?:am|pm)\b\s*[-–]|"
-    r"\b(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\s*[-–]\s*(?:mon|tue|wed|thu|fri|sat|sun))" + _SEG + r"[.!?]?")
+    r"\b(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\s*[-–]\s*(?:mon|tue|wed|thu|fri|sat|sun))")
+_POLICY_RE = re.compile(r"(?i)" + _SEG + _POLICY_PROSE + _SEG + r"[.!?]?")
+_POLICY_NEEDS = re.compile(r"(?i)" + _POLICY_PROSE)
 
 # 5c. A short line that is just a name with a registered/trade mark on it is
 #     the seller signing off, not a spec ("Total Digital Stores®.").
@@ -302,8 +311,10 @@ _MAX_SENTENCE = int(os.getenv("SANITIZE_MAX_SENTENCE") or "300")
 # 5,000-character unpunctuated spec run cost the policy rule 44 seconds,
 # and a sheet of them turned a clean-up pass into a 3-4 hour job (YRA and
 # Arden, 2026-09-05..08). A long run under a capped rule is skipped
-# outright (any match would exceed the cap and be kept anyway), and an
-# uncapped rule only runs on a run that contains its anchor.
+# outright (any match would exceed the cap and be kept anyway), and every
+# rule first looks for its anchor with a plain search, running the sentence
+# pattern only on runs where it can match - on ordinary HTML descriptions
+# (short runs between tags) that is where most of the time went.
 _RUN_BREAK_RE = re.compile(r"[.!?\n<>]")
 
 
@@ -408,7 +419,7 @@ def sanitize_description(html, limit=45000):
     cleaned = _RETAIL_TEMPLATE_RE.sub("", cleaned)
     # Topic rule FIRST so whole seller sentences die intact; the phrase
     # blocklist then only mops up non-sentence banner fragments.
-    cleaned = _SELLER_TOPIC_RE.sub("", cleaned)
+    cleaned = _sub_sentences(_SELLER_TOPIC_RE, cleaned, max_len=0, needs=_SELLER_TOPIC_NEEDS)
     cleaned = _TEMPLATE_JUNK_RE.sub("", cleaned)
     # Shape rules (see above): navigation strips and cross-sell tails first,
     # so their product names and prices never reach the sentence rules as
@@ -417,13 +428,13 @@ def sanitize_description(html, limit=45000):
     cleaned = _NAV_STRIP_RE.sub(" ", cleaned)
     cleaned = _cut_cross_sell(cleaned)
     cleaned = _sub_sentences(_MONEY_RE, cleaned, max_len=0, needs=_MONEY_ANCHOR_RE)
-    cleaned = _sub_sentences(_FOOTER_RE, cleaned)
-    cleaned = _sub_sentences(_STORY_RE, cleaned)
-    cleaned = _sub_sentences(_POLICY_RE, cleaned)
+    cleaned = _sub_sentences(_FOOTER_RE, cleaned, needs=_FOOTER_NEEDS)
+    cleaned = _sub_sentences(_STORY_RE, cleaned, needs=_STORY_NEEDS)
+    cleaned = _sub_sentences(_POLICY_RE, cleaned, needs=_POLICY_NEEDS)
     cleaned = _TAGLINE_RE.sub("", cleaned)
-    cleaned = _sub_sentences(_FIRST_PERSON_RE, cleaned)
-    cleaned = _sub_sentences(_FIRST_PERSON_US_RE, cleaned)
-    cleaned = _sub_sentences(_SECOND_PERSON_POLICY_RE, cleaned)
+    cleaned = _sub_sentences(_FIRST_PERSON_RE, cleaned, needs=_FIRST_PERSON_NEEDS)
+    cleaned = _sub_sentences(_FIRST_PERSON_US_RE, cleaned, needs=_FIRST_PERSON_US_NEEDS)
+    cleaned = _sub_sentences(_SECOND_PERSON_POLICY_RE, cleaned, needs=_SECOND_PERSON_NEEDS)
     cleaned = _NAV_LABEL_RE.sub(" ", cleaned)
     cleaned = _RULER_RE.sub(" ", cleaned)
     # Debris the sentence rules leave behind: runs of bare punctuation where
