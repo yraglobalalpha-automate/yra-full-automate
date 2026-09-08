@@ -1,0 +1,32 @@
+name: Audit Overstrip (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      short_chars:
+        description: "Flag descriptions shorter than this"
+        required: false
+        default: "120"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Audit
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SHORT_CHARS: ${{ inputs.short_chars }}
+        run: python audit_overstrip.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: overstrip-audit
+          path: overstrip_audit.csv
+          if-no-files-found: warn

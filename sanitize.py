@@ -6,6 +6,7 @@ at all, despite both being documented requirements. This module actually
 implements them.
 """
 import logging
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -203,7 +204,9 @@ _POLICY_WORDS = (
     r"items?|orders?|goods|parcels?|purchases?|return\w*|refund\w*|receiv\w*|receie\w*|"
     r"contact|message|feedback|dispatch\w*|deliver(?:y|ies|ed)|ship(?:ping|ped|s)?|"
     r"payments?|pay|cancel\w*|claims?|faults?|faulty|packaging|seals?|sealed|unopened|"
-    r"unused|deduction|exchanges?|invoice|tracking|courier|postage|"
+    # "tracking" alone is a spec word ("optical tracking", "eye tracking"),
+    # so it only counts as policy talk when it is a tracking NUMBER.
+    r"unused|deduction|exchanges?|invoice|tracking numbers?|courier|postage|"
     r"within \d+ (?:working |calendar |business )?(?:days?|hours?)"
 )
 _YOU = r"\b(?:you|your|you're|you've|you'll)\b"
@@ -277,6 +280,22 @@ _CROSS_SELL_RE = re.compile(
 
 _RULER_RE = re.compile(r"(?:[_\-—–=~*]|&mdash;|&ndash;){4,}")
 _EMPTYISH = r"(?:&nbsp;|&#160;|\s|[.,;:!?\-–—_*])*"
+
+
+# The sentence rules assume a sentence. Plenty of eBay descriptions are one
+# long unpunctuated run of specs - "Ergonomic 3 Button Design - Comfortable
+# use ... Optical tracking fluid ... Compatible with All Windows and Mac" -
+# where a single policy word would otherwise delete the entire product
+# description (GTV rows 5691/5692, caught 2026-09-07 before any such row
+# was written). A genuine seller sentence is short; a 400-character "match"
+# is the whole description, so refuse to delete it.
+_MAX_SENTENCE = int(os.getenv("SANITIZE_MAX_SENTENCE") or "300")
+
+
+def _sub_sentences(rx, text, max_len=None):
+    """rx.sub, but a match longer than max_len is left in place."""
+    limit = _MAX_SENTENCE if max_len is None else max_len
+    return rx.sub(lambda m: m.group(0) if len(m.group(0)) > limit else "", text)
 
 
 def _cut_cross_sell(text):
@@ -354,13 +373,13 @@ def sanitize_description(html, limit=45000):
     cleaned = _NAV_STRIP_RE.sub(" ", cleaned)
     cleaned = _cut_cross_sell(cleaned)
     cleaned = _MONEY_RE.sub("", cleaned)
-    cleaned = _FOOTER_RE.sub("", cleaned)
-    cleaned = _STORY_RE.sub("", cleaned)
-    cleaned = _POLICY_RE.sub("", cleaned)
+    cleaned = _sub_sentences(_FOOTER_RE, cleaned)
+    cleaned = _sub_sentences(_STORY_RE, cleaned)
+    cleaned = _sub_sentences(_POLICY_RE, cleaned)
     cleaned = _TAGLINE_RE.sub("", cleaned)
-    cleaned = _FIRST_PERSON_RE.sub("", cleaned)
-    cleaned = _FIRST_PERSON_US_RE.sub("", cleaned)
-    cleaned = _SECOND_PERSON_POLICY_RE.sub("", cleaned)
+    cleaned = _sub_sentences(_FIRST_PERSON_RE, cleaned)
+    cleaned = _sub_sentences(_FIRST_PERSON_US_RE, cleaned)
+    cleaned = _sub_sentences(_SECOND_PERSON_POLICY_RE, cleaned)
     cleaned = _NAV_LABEL_RE.sub(" ", cleaned)
     cleaned = _RULER_RE.sub(" ", cleaned)
     # Debris the sentence rules leave behind: runs of bare punctuation where
