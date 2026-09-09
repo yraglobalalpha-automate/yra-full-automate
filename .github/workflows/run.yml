@@ -77,6 +77,10 @@ jobs:
           # (yra-global-onbuy-sync drops to 2000 at this repo's go-live).
           EBAY_DAILY_CALL_BUDGET: ${{ vars.EBAY_DAILY_CALL_BUDGET || '2000' }}
           RUNS_PER_DAY: ${{ vars.RUNS_PER_DAY || '12' }}
+          # Commission model: "category" prices against OnBuy's real tier per
+          # category (fees.py); unset/anything else keeps the flat 20%.
+          FEE_MODE: ${{ vars.FEE_MODE }}
+          FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
           MAX_PRODUCTS_PER_RUN: ${{ vars.MAX_PRODUCTS_PER_RUN }}
           REFRESH_ALL: ${{ inputs.refresh_all }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

@@ -103,6 +103,10 @@ TRACKING_COLUMNS = (
     "OnBuy Listing Active",
     "OnBuy Product ID",
     "Last OnBuy Sync",
+    # Last-seen cost and postage: lets the sync recognise a price it set
+    # itself (the formula at that cost) when the commission model changes.
+    "Cost Price (£)",
+    "Shipping Cost (£)",
 )
 
 

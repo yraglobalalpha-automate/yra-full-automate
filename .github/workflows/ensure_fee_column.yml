@@ -1,0 +1,31 @@
+name: Ensure Fee Percent Column (one-off)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "yes = report where the header would go without writing"
+        required: false
+        default: "yes"
+
+# Writes the sheet the sync also writes - queue behind it (see run.yml).
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  ensure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Ensure Fee % header
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+        run: python ensure_fee_column.py

@@ -15,6 +15,7 @@ import requests
 from oauth2client.service_account import ServiceAccountCredentials
 
 import notify
+import fees
 import pricing
 import storage
 import supabase_db
@@ -61,12 +62,13 @@ RUNS_PER_DAY = int(os.getenv("RUNS_PER_DAY") or "8")
 _MAX_PRODUCTS_PER_RUN_OVERRIDE = os.getenv("MAX_PRODUCTS_PER_RUN")
 
 # ================= PRICE CHECK FLAG THRESHOLDS =================
-# Total margin % over cost (the default formula gives ~40% = 20% fee + 20%
-# profit). Normal = at/near default, Medium = moderately above, High = well
-# above - adjust these two numbers if "a little more"/"much more" should mean
-# different percentages than this.
-PRICE_CHECK_NORMAL_MAX_PCT = 45
-PRICE_CHECK_MEDIUM_MAX_PCT = 70
+# Measured against the margin the formula gives THAT row (its cost band and
+# its category's real commission, 2026-09-09) rather than a fixed 40%:
+# Normal = within 5 points of the formula's own margin, Medium = up to 30
+# points above it, High = beyond. Adjust the two offsets if "a little
+# more" / "much more" should mean something else.
+PRICE_CHECK_NORMAL_OVER_PCT = 5
+PRICE_CHECK_MEDIUM_OVER_PCT = 30
 
 # ================= ONBUY API PUSH (safety-gated) =================
 # Off by default: this pipeline previously only ever produced feed.xml for
@@ -235,6 +237,25 @@ def title_phrase_category(title):
         if n <= len(seq) and any(tuple(seq[i:i + n]) == phrase for i in range(len(seq) - n + 1)):
             return path
     return None
+
+
+def _to_float(value):
+    try:
+        return float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _formula_priced(price, cost, ship, fee_rule):
+    """True when `price` is what our formula would have set at this cost -
+    under the flat 20% model or the category tier - i.e. the automation
+    set it, not a person."""
+    if price <= 0 or cost <= 0:
+        return False
+    candidates = [pricing.calculate_selling_price(cost, ship, platform_fee_percent=pricing.PLATFORM_FEE_PERCENT)]
+    if fee_rule is not None:
+        candidates.append(pricing.calculate_selling_price(cost, ship, fee_rule=fee_rule))
+    return any(abs(c - price) < 0.011 for c in candidates)
 
 
 def carry_forward(fresh, stored, default=None):
@@ -1515,6 +1536,8 @@ def main():
     skus_in_batch = [str(row.get("SKU") or "").strip() for _, row in batch]
     skus_in_batch = [s for s in skus_in_batch if s]
     existing_fields = supabase_db.fetch_existing_fields(skus_in_batch)
+    priced_with_category_fee = 0
+    price_lowered_by_fee = 0
 
     for idx, row in batch:
         i = idx + 2
@@ -1595,7 +1618,10 @@ def main():
         # imply less than the default, never silently lower a price someone
         # deliberately set higher.
         shipping_cost = float(row.get("Shipping Cost (£)") or 0)
-        formula_price = pricing.calculate_selling_price(cost_price, shipping_cost)
+        # OnBuy's real commission for this category (fees.py, FEE_MODE=
+        # category), else the flat 20% assumption the formula grew up with.
+        fee_rule = fees.rule_for_category_id(category_id)
+        formula_price = pricing.calculate_selling_price(cost_price, shipping_cost, fee_rule=fee_rule)
         existing_price = float(row.get("Selling Price (£)") or 0)
         # Out-of-stock must never destroy the price: writing 0 into the
         # Selling Price cell erased manually-raised prices (max() only
@@ -1604,20 +1630,37 @@ def main():
         # 2026-08-28). Keep the price; stock 0 rides on its own column and
         # push (stock-0 updates with a real price are valid - the OOS pass
         # already pushes exactly that).
-        selling_price = max(existing_price, formula_price)
+        # A price the automation set itself may follow the formula DOWN when
+        # the commission assumption drops (category mode); a price a person
+        # set above the formula is never lowered. "Set by the automation" =
+        # equals what the formula produced at this cost, or at the cost the
+        # mirror last saw, under either fee model (2026-09-09).
+        _prev = existing_fields.get(sku, {})
+        automation_set = (_formula_priced(existing_price, cost_price, shipping_cost, fee_rule)
+                          or _formula_priced(existing_price, _to_float(_prev.get("Cost Price (£)")),
+                                             _to_float(_prev.get("Shipping Cost (£)")), fee_rule))
+        if fee_rule is not None and automation_set and 0 < formula_price < existing_price:
+            selling_price = formula_price
+            price_lowered_by_fee += 1
+            logger.info("Row %d (SKU %s): formula price follows the %s commission down: %.2f -> %.2f",
+                        i, sku, fee_rule.name, existing_price, formula_price)
+        else:
+            selling_price = max(existing_price, formula_price)
+        if fee_rule is not None:
+            priced_with_category_fee += 1
 
         # ================= PRICE CHECK FLAG =================
-        # Normal = at/near the default margin, Medium = moderately above it,
-        # High = well above it. Thresholds are a judgment call on "a little
-        # more" / "much more" - adjust PRICE_CHECK_MEDIUM_MAX_PCT /
-        # PRICE_CHECK_HIGH_MIN_PCT below if these don't match what you meant.
-        if stock == 0 or cost_price <= 0:
+        # Relative to the margin the formula gives THIS row (its band and
+        # its category's commission), so a cheap item in the 100% band is
+        # not "High" just for being priced by the book.
+        if stock == 0 or cost_price <= 0 or formula_price <= 0:
             price_check_flag = ""
         else:
             margin_pct = (selling_price - cost_price) / cost_price * 100
-            if margin_pct <= PRICE_CHECK_NORMAL_MAX_PCT:
+            formula_margin_pct = (formula_price - cost_price) / cost_price * 100
+            if margin_pct <= formula_margin_pct + PRICE_CHECK_NORMAL_OVER_PCT:
                 price_check_flag = "Normal"
-            elif margin_pct <= PRICE_CHECK_MEDIUM_MAX_PCT:
+            elif margin_pct <= formula_margin_pct + PRICE_CHECK_MEDIUM_OVER_PCT:
                 price_check_flag = "Medium"
             else:
                 price_check_flag = "High"
@@ -1976,6 +2019,10 @@ def main():
             row_updates.append({"range": f"{col_letter(col_map['Category'])}{i}", "values": [[category]]})
         if "Price Check Flag" in col_map:
             row_updates.append({"range": f"{col_letter(col_map['Price Check Flag'])}{i}", "values": [[price_check_flag]]})
+        if "Fee %" in col_map:
+            row_updates.append({"range": f"{col_letter(col_map['Fee %'])}{i}",
+                                "values": [[f"{pricing.effective_fee_percent(selling_price, fee_rule):.2f}"
+                                            if fee_rule is not None else str(pricing.PLATFORM_FEE_PERCENT)]]})
         if "Condition" in col_map:
             row_updates.append({"range": f"{col_letter(col_map['Condition'])}{i}",
                                 "values": [[ebay_data.get("condition") or "New"]]})
@@ -2019,7 +2066,8 @@ def main():
             "Cost Price (£)": cost_price,
             "Shipping Cost (£)": str(shipping_cost) if shipping_cost else None,
             "Profit %": str(pricing.MIN_PROFIT_PERCENT),
-            "Fee %": str(pricing.PLATFORM_FEE_PERCENT),
+            "Fee %": (f"{pricing.effective_fee_percent(selling_price, fee_rule):.2f}"
+                      if fee_rule is not None else str(pricing.PLATFORM_FEE_PERCENT)),
             "Stock": stock,
             "Selling Price (£)": selling_price,
             "Status": "ACTIVE" if stock > 0 else "INACTIVE",
@@ -2211,6 +2259,9 @@ def main():
     # ================= FINAL LOGS + ALERTS =================
     logger.info("DONE")
     logger.info("Updated rows: %d", updated_count)
+    if fees.enabled():
+        logger.info("Pricing: %d row(s) priced with their category's commission, %d formula price(s) followed it down",
+                    priced_with_category_fee, price_lowered_by_fee)
     logger.info("OnBuy: %d created, %d updated, %d deferred (awaiting go-live), %d postponed (transient), "
                  "%d failed, %d removed (brand rejected), %d brand-blocked (flagged), %d skipped (dead eBay link), "
                  "%d awaiting category (worklist), %d suspended-locked, %d no-price skipped, "

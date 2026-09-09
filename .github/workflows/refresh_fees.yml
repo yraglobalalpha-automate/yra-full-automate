@@ -1,0 +1,39 @@
+name: Refresh OnBuy Commission Tables (read-only API)
+
+on:
+  workflow_dispatch:
+
+# GET calls only, but it takes an OnBuy token - queue with the other callers.
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Refresh commission tables
+        env:
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: python refresh_fees.py
+      - name: Upload commission tables
+        uses: actions/upload-artifact@v4
+        with:
+          name: onbuy-commission-tables
+          path: |
+            onbuy_commission_tiers.csv
+            onbuy_category_tiers.csv
+          if-no-files-found: error

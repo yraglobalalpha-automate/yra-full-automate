@@ -55,4 +55,6 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'schedule' && '0' || (inputs.dry_run == 'no' && '0' || '1') }}
           UNDERCUT_PENCE: ${{ inputs.undercut_pence || '1' }}
           CHECK_BATCH: ${{ inputs.check_batch || '100' }}
+          FEE_MODE: ${{ vars.FEE_MODE }}
+          FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
         run: python buybox_defense.py

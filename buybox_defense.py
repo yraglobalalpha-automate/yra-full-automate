@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+import fees
 import pricing
 from onbuy_client import BASE_URL, OnBuyClient
 import sku_aliases
@@ -72,10 +73,15 @@ def _load_protected():
 PROTECTED_SKUS = _load_protected()
 
 
-def floor_price(cost, shipping):
+def floor_price(cost, shipping, rule=None):
+    """The lowest price that still keeps DEFENSE_PROFIT_PERCENT after the
+    commission - the category's real tier when the store runs in
+    FEE_MODE=category (fees.py, 2026-09-09), else the flat multiplier."""
     base = cost + shipping
     if base <= 0:
         return None
+    if rule is not None:
+        return round(pricing.price_for_profit(base, DEFENSE_PROFIT_PERCENT, rule), 2)
     return round(base * DEFENSE_MULT, 2)
 
 
@@ -186,7 +192,7 @@ def main():
         cost = to_f(r.get("Cost Price (£)"))
         ship = to_f(r.get("Shipping Cost (£)")) or 0.0
         if cost:
-            cost_by_sku[sku] = (cost, ship)
+            cost_by_sku[sku] = (cost, ship, fees.rule_for_category_path(r.get("Category")))
     print(f"sheet rows with cost: {len(cost_by_sku)} | protected: {len(PROTECTED_SKUS)} | push enabled: {PUSH_ENABLED} | dry run: {DRY_RUN}")
 
     onbuy = OnBuyClient()
@@ -221,8 +227,8 @@ def main():
             counts["no cost"] += 1
             log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "NO-COST", "", "", now])
             continue
-        cost, ship = cost_by_sku[sku]
-        floor = floor_price(cost, ship)
+        cost, ship, rule = cost_by_sku[sku]
+        floor = floor_price(cost, ship, rule)
         if floor is None:
             counts["no cost"] += 1
             log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "NO-COST", "", "", now])
