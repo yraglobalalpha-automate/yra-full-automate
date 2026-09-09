@@ -246,16 +246,55 @@ def _to_float(value):
         return 0.0
 
 
-def _formula_priced(price, cost, ship, fee_rule):
+def _formula_priced(price, cost, ship, fee_rule, profit_override=None, fee_override=None):
     """True when `price` is what our formula would have set at this cost -
-    under the flat 20% model or the category tier - i.e. the automation
-    set it, not a person."""
+    under the flat 20% model, the category tier, or the row's own
+    percentage overrides - i.e. the automation set it, not a person."""
     if price <= 0 or cost <= 0:
         return False
+    total = cost + ship
     candidates = [pricing.calculate_selling_price(cost, ship, platform_fee_percent=pricing.PLATFORM_FEE_PERCENT)]
     if fee_rule is not None:
         candidates.append(pricing.calculate_selling_price(cost, ship, fee_rule=fee_rule))
+    if profit_override is not None or fee_override is not None:
+        profit = profit_override if profit_override is not None else pricing.profit_percent(total)
+        if fee_override is not None:
+            candidates.append(pricing.price_for_profit(total, profit, platform_fee_percent=fee_override))
+        else:
+            candidates.append(pricing.price_for_profit(total, profit, rule=fee_rule))
     return any(abs(c - price) < 0.011 for c in candidates)
+
+
+def _pct_value(cell, hi=100):
+    """A percentage typed in a sheet cell ("12", "12.5", "12.5%"), or None.
+    hi caps what counts as sane: a fee at or past 100% can never price, a
+    profit legitimately can (cheap items run 80%+, and a manual 150% is a
+    valid override)."""
+    s = str(cell if cell is not None else "").replace("%", "").replace(",", "").strip()
+    if not s:
+        return None
+    try:
+        v = float(s)
+    except ValueError:
+        return None
+    return v if 0 <= v < hi else None
+
+
+def resolve_pct_cell(cell, auto_values, mirror, hi=100):
+    """The manual override in a Fee % / Profit % cell, or None when the
+    cell is the automation's own. The automation's own = blank, or matching
+    (within rounding) a value the automation computes now or last wrote
+    (the mirror; overrides are never stored there, so a typed number stays
+    recognised as an override run after run). Anything else was typed by a
+    person: it feeds the formula and is never overwritten (user policy
+    2026-09-09)."""
+    typed = _pct_value(cell, hi)
+    if typed is None:
+        return None
+    candidates = [v for v in list(auto_values) + [_pct_value(mirror, hi)] if v is not None]
+    if any(abs(typed - v) < 0.05 for v in candidates):
+        return None
+    return typed
 
 
 def carry_forward(fresh, stored, default=None):
@@ -1618,10 +1657,29 @@ def main():
         # imply less than the default, never silently lower a price someone
         # deliberately set higher.
         shipping_cost = float(row.get("Shipping Cost (£)") or 0)
+        _total_cost = cost_price + shipping_cost
+        _prev = existing_fields.get(sku, {})
         # OnBuy's real commission for this category (fees.py, FEE_MODE=
         # category), else the flat 20% assumption the formula grew up with.
         fee_rule = fees.rule_for_category_id(category_id)
-        formula_price = pricing.calculate_selling_price(cost_price, shipping_cost, fee_rule=fee_rule)
+        # Fee % / Profit % cells: normally the automation's own report, but
+        # a different number typed there is a per-row override - it drives
+        # the formula and is never overwritten (resolve_pct_cell).
+        _band_now = pricing.profit_percent(_total_cost) if cost_price > 0 else None
+        _prev_total = _to_float(_prev.get("Cost Price (£)")) + _to_float(_prev.get("Shipping Cost (£)"))
+        _band_prev = pricing.profit_percent(_prev_total) if _prev_total > 0 else None
+        profit_override = resolve_pct_cell(row.get("Profit %"), [_band_now, _band_prev],
+                                           _prev.get("Profit %"), hi=500)
+        _fee_auto = ([fee_rule.lower_pct, fee_rule.upper_pct] if fee_rule is not None
+                     else [float(pricing.PLATFORM_FEE_PERCENT)])
+        fee_override = resolve_pct_cell(row.get("Fee %"), _fee_auto, _prev.get("Fee %"))
+        _profit_used = profit_override if profit_override is not None else (_band_now or 0)
+        if cost_price <= 0:
+            formula_price = 0.0
+        elif fee_override is not None:
+            formula_price = pricing.price_for_profit(_total_cost, _profit_used, platform_fee_percent=fee_override)
+        else:
+            formula_price = pricing.price_for_profit(_total_cost, _profit_used, rule=fee_rule)
         existing_price = float(row.get("Selling Price (£)") or 0)
         # Out-of-stock must never destroy the price: writing 0 into the
         # Selling Price cell erased manually-raised prices (max() only
@@ -1631,19 +1689,24 @@ def main():
         # push (stock-0 updates with a real price are valid - the OOS pass
         # already pushes exactly that).
         # A price the automation set itself may follow the formula DOWN when
-        # the commission assumption drops (category mode); a price a person
-        # set above the formula is never lowered. "Set by the automation" =
-        # equals what the formula produced at this cost, or at the cost the
-        # mirror last saw, under either fee model (2026-09-09).
-        _prev = existing_fields.get(sku, {})
-        automation_set = (_formula_priced(existing_price, cost_price, shipping_cost, fee_rule)
+        # the commission assumption drops (category mode) or the row's own
+        # percentages are lowered; a price a person set above the formula is
+        # never lowered. "Set by the automation" = equals what the formula
+        # produced at this cost, or at the cost the mirror last saw, under
+        # any fee model this row has been through (2026-09-09).
+        automation_set = (_formula_priced(existing_price, cost_price, shipping_cost, fee_rule,
+                                          profit_override, fee_override)
                           or _formula_priced(existing_price, _to_float(_prev.get("Cost Price (£)")),
-                                             _to_float(_prev.get("Shipping Cost (£)")), fee_rule))
-        if fee_rule is not None and automation_set and 0 < formula_price < existing_price:
+                                             _to_float(_prev.get("Shipping Cost (£)")), fee_rule,
+                                             profit_override, fee_override))
+        _reprice_basis = (fee_rule is not None or profit_override is not None or fee_override is not None)
+        if _reprice_basis and automation_set and 0 < formula_price < existing_price:
             selling_price = formula_price
             price_lowered_by_fee += 1
+            _basis = ("row overrides" if (profit_override is not None or fee_override is not None)
+                      else fee_rule.name)
             logger.info("Row %d (SKU %s): formula price follows the %s commission down: %.2f -> %.2f",
-                        i, sku, fee_rule.name, existing_price, formula_price)
+                        i, sku, _basis, existing_price, formula_price)
         else:
             selling_price = max(existing_price, formula_price)
         if fee_rule is not None:
@@ -2019,10 +2082,16 @@ def main():
             row_updates.append({"range": f"{col_letter(col_map['Category'])}{i}", "values": [[category]]})
         if "Price Check Flag" in col_map:
             row_updates.append({"range": f"{col_letter(col_map['Price Check Flag'])}{i}", "values": [[price_check_flag]]})
-        if "Fee %" in col_map:
+        # The percentage columns are written only while they hold the
+        # automation's own value - a manual override stays exactly as typed.
+        if "Fee %" in col_map and fee_override is None:
+            _fee_shown = (pricing.effective_fee_percent(selling_price, fee_rule) if selling_price > 0
+                          else (fee_rule.lower_pct if fee_rule else float(pricing.PLATFORM_FEE_PERCENT)))
             row_updates.append({"range": f"{col_letter(col_map['Fee %'])}{i}",
-                                "values": [[f"{pricing.effective_fee_percent(selling_price, fee_rule):.2f}"
-                                            if fee_rule is not None else str(pricing.PLATFORM_FEE_PERCENT)]]})
+                                "values": [[f"{_fee_shown:.2f}"]]})
+        if "Profit %" in col_map and profit_override is None:
+            row_updates.append({"range": f"{col_letter(col_map['Profit %'])}{i}",
+                                "values": [[f"{(_band_now or 0):.2f}"]]})
         if "Condition" in col_map:
             row_updates.append({"range": f"{col_letter(col_map['Condition'])}{i}",
                                 "values": [[ebay_data.get("condition") or "New"]]})
@@ -2065,9 +2134,17 @@ def main():
             "Supplier": "eBay",
             "Cost Price (£)": cost_price,
             "Shipping Cost (£)": str(shipping_cost) if shipping_cost else None,
-            "Profit %": str(pricing.MIN_PROFIT_PERCENT),
-            "Fee %": (f"{pricing.effective_fee_percent(selling_price, fee_rule):.2f}"
-                      if fee_rule is not None else str(pricing.PLATFORM_FEE_PERCENT)),
+            # The automation's own view, never a row's override: this is the
+            # baseline resolve_pct_cell compares the sheet cells against, so
+            # storing an override here would make it look automation-written
+            # and get it clobbered next basis change. GTV's columns are
+            # integer-typed in Postgres ("0.00" bounced the whole 375-row
+            # upsert with 22P02 on the first category run), so send whole
+            # numbers - the sheet keeps the 2-decimal display.
+            "Profit %": str(int(round(_band_now or 0))),
+            "Fee %": str(int(round(pricing.effective_fee_percent(selling_price, fee_rule)
+                                   if selling_price > 0 else
+                                   (fee_rule.lower_pct if fee_rule else pricing.PLATFORM_FEE_PERCENT)))),
             "Stock": stock,
             "Selling Price (£)": selling_price,
             "Status": "ACTIVE" if stock > 0 else "INACTIVE",

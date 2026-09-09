@@ -9,6 +9,7 @@ the pipeline's source of truth.
 """
 import logging
 import os
+import re
 
 import requests
 
@@ -107,7 +108,21 @@ TRACKING_COLUMNS = (
     # itself (the formula at that cost) when the commission model changes.
     "Cost Price (£)",
     "Shipping Cost (£)",
+    # The automation's own last-written percentages - what tells a manual
+    # override in the sheet's Fee % / Profit % cells apart from a stale
+    # value the automation wrote under an older basis.
+    "Fee %",
+    "Profit %",
 )
+
+
+def _select_param(columns):
+    """PostgREST select= identifiers: names carrying anything beyond plain
+    word characters must be double-quoted - "Cost Price (£)" unquoted stops
+    the parser at the parenthesis (PGRST100, first seen 2026-09-09 when the
+    cost columns joined the prefetch; bare spaces happened to be tolerated,
+    parens are not)."""
+    return ",".join(c if re.fullmatch(r"[A-Za-z0-9_]+", c) else f'"{c}"' for c in columns)
 
 
 def fetch_existing_fields(skus):
@@ -138,7 +153,7 @@ def fetch_existing_fields(skus):
 
     endpoint = f"{supabase_url.rstrip('/')}/rest/v1/{TABLE_NAME}"
     headers = {"apikey": service_key, "Authorization": f"Bearer {service_key}"}
-    params = {"select": "SKU," + ",".join(TRACKING_COLUMNS), "SKU": f"in.({','.join(skus)})"}
+    params = {"select": _select_param(("SKU",) + TRACKING_COLUMNS), "SKU": f"in.({','.join(skus)})"}
 
     try:
         resp = requests.get(endpoint, headers=headers, params=params, timeout=30)

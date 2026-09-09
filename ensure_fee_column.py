@@ -17,7 +17,7 @@ from generate_xml import col_letter
 
 SHEET_NAME = os.getenv("SHEET_NAME") or "YRA_Full_Feed_Master"
 TABS = [t.strip() for t in (os.getenv("SHEET_TABS") or "Amazon").split(",") if t.strip()]
-COLUMN = "Fee %"
+COLUMNS = [c.strip() for c in (os.getenv("COLUMNS") or "Fee %,Profit %").split(",") if c.strip()]
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
 
 
@@ -30,19 +30,21 @@ def main():
     sheets = [book.sheet1] + [book.worksheet(t) for t in TABS if t in titles and t != book.sheet1.title]
     for ws in sheets:
         headers = [str(h).strip() for h in ws.row_values(1)]
-        if COLUMN in headers:
-            print(f"[{ws.title}] already has {COLUMN!r} (column {headers.index(COLUMN) + 1})")
-            continue
         target = len(headers) + 1          # first cell after the last filled header
-        cell = f"{col_letter(target)}1"
-        print(f"[{ws.title}] {len(headers)} headers - would write {COLUMN!r} at {cell}")
-        if DRY_RUN:
-            print(f"[{ws.title}] DRY RUN - nothing written")
-            continue
-        if target > ws.col_count:
-            ws.add_cols(1)
-        ws.update_acell(cell, COLUMN)
-        print(f"[{ws.title}] WROTE {COLUMN!r} at {cell}")
+        for column in COLUMNS:
+            if column in headers:
+                print(f"[{ws.title}] already has {column!r} (column {headers.index(column) + 1})")
+                continue
+            cell = f"{col_letter(target)}1"
+            print(f"[{ws.title}] would write {column!r} at {cell}")
+            if DRY_RUN:
+                print(f"[{ws.title}] DRY RUN - nothing written")
+            else:
+                if target > ws.col_count:
+                    ws.add_cols(1)
+                ws.update_acell(cell, column)
+                print(f"[{ws.title}] WROTE {column!r} at {cell}")
+            target += 1
 
 
 if __name__ == "__main__":
