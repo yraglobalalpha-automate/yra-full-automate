@@ -1,42 +1,39 @@
 """Selling price calculation.
 
-price = (cost + shipping) x (1 + profit%/100) / (1 - platform_fee%/100)
+price = (cost + shipping) x (1 + profit%/100) / (1 - commission%/100)
 
-**The platform fee is a share of the SELLING price, not of cost** (user
-policy 2026-09-01). OnBuy charges its commission on what the customer pays,
-so adding the fee to a cost-side markup under-collected it: at the 60% band
-a GBP 20 item was priced GBP 32, OnBuy took 20% OF 32 (GBP 6.40, not the
-GBP 4.00 the markup allowed for), and the intended 40% profit arrived as
-28%. Dividing by (1 - fee) is the algebra that fixes it: from
-S x (1 - fee) = cost x (1 + profit), the amount retained after commission
-is exactly cost x (1 + profit%) at ANY fee rate.
+Exactly three ingredients (user policy, restated 2026-09-11): the cost
+base, the profit percentage its range decides, and OnBuy's commission for
+the product's category - nothing else.
 
-Tiered profit by product cost (user policy 2026-07-21, rewritten
-2026-08-05, fee split out of the markup 2026-09-01). MARGIN_BANDS still
-stores each band's historical TOTAL markup; the profit portion is that
-total minus the standard 20% fee, so the policy schedule's intent is
-unchanged and only the fee arithmetic moved:
+**The commission is a share of the SELLING price, not of cost** (user
+policy 2026-09-01). OnBuy charges it on what the customer pays, so adding
+it to a cost-side markup under-collected it. Dividing by (1 - fee) is the
+algebra that fixes it: from S x (1 - fee) = cost x (1 + profit), the
+amount retained after commission is exactly cost x (1 + profit%) at ANY
+fee rate - so the profit schedule holds whether the category pays 7% or
+20%, and the fee never stacks on top of the profit.
 
-  cost + shipping  under GBP 5    -> 80% profit (100% band) -> x2.25
-  cost + shipping  GBP 5 to 10    -> 80% profit (100% band) -> x2.25
-  cost + shipping  GBP 10 to 30   -> 40% profit ( 60% band) -> x1.75
-  cost + shipping  GBP 30 to 100  -> 40% profit ( 60% band) -> x1.75
-  cost + shipping  over GBP 100   -> 25% profit ( 45% band) -> x1.5625
+Profit by cost range (user schedule 2026-09-11, stored as PLAIN PROFIT
+percentages - the older "total markup" notation that folded a flat 20%
+fee assumption into the numbers is retired):
 
-The x multipliers above assume the standard 20% commission; a category
-with a different fee gets its own divisor, so the band's profit portion
-survives fee-heavy categories instead of being eaten by them (that is what
-the old `extra_fee` stacking was reaching for, now exact).
+  cost + shipping  under GBP 5    -> 100% profit
+  cost + shipping  GBP 5 to 10    ->  80% profit
+  cost + shipping  GBP 10 to 50   ->  40% profit
+  cost + shipping  above GBP 50   ->  20% profit
 
 Cheap products carried too little absolute profit at a flat markup - a
-GBP 3 item earned pennies after the fee. The bands apply to the same base
-the markup multiplies (cost + shipping). Band edges: the first bound is
-strict ("under 5"), every later band's upper bound is inclusive - exactly
-GBP 10 falls in the 100% band, exactly GBP 30 and exactly GBP 100 in the
-60% band; strictly above 100 gets 45%. This applies to already-listed
-products too: every sweep recalculates and raises any price below the
-formula (max(existing, formula) in generate_xml.py) - only a manually-set
-price ABOVE the formula is left alone, per the never-lower rule.
+GBP 3 item earned pennies after the fee. The ranges apply to the same
+base the profit multiplies (cost + shipping). Range edges: the first
+bound is strict ("under 5"), every later range's upper bound is inclusive
+- exactly GBP 10 falls in the 80% range, exactly GBP 50 in the 40% range;
+strictly above 50 gets 20%. This applies to already-listed products too:
+every sweep recalculates and raises any price below the formula
+(max(existing, formula) in generate_xml.py) - only a manually-set price
+ABOVE the formula is left alone, per the never-lower rule - and a price
+the automation set under a SUPERSEDED schedule follows the formula down
+(see _SUPERSEDED_PROFIT_BANDS).
 """
 
 import os
@@ -47,59 +44,57 @@ MIN_PROFIT_PERCENT = 20
 # for rows without a category tier and for stores not yet in category mode.
 PLATFORM_FEE_PERCENT = 20  # OnBuy commission - charged on the SELLING price
 
-# (upper cost bound inclusive, total markup %) - checked in order; None = no
-# bound. Adjacent bands may share a rate - they are kept separate so each
-# line traces to the policy decision that set it. These are TOTAL markups
-# (profit + the standard fee); profit_percent() strips the fee out.
-MARGIN_BANDS = (
-    (5.0, 100),    # under GBP 5 (2026-07-21)
-    (10.0, 100),   # GBP 5-10 inclusive (80% -> 100%, 2026-08-05)
-    (30.0, 60),    # over GBP 10 up to 30 inclusive (2026-08-05)
-    (100.0, 60),   # over GBP 30 up to 100 inclusive (40% -> 60%, 2026-08-05)
-    (None, 45),    # above GBP 100 (30% -> 25% profit, 2026-09-11; was 50 since 2026-08-05)
+# (upper cost bound inclusive, PROFIT %) - checked in order; None = no
+# bound. Each line traces to the policy decision that set it.
+PROFIT_BANDS = (
+    (5.0, 100),    # under GBP 5 (80% -> 100%, 2026-09-11)
+    (10.0, 80),    # GBP 5-10 inclusive (2026-09-11 schedule)
+    (50.0, 40),    # over GBP 10 up to 50 inclusive (2026-09-11 schedule)
+    (None, 20),    # above GBP 50 (40%/25% -> 20%, 2026-09-11)
 )
 
 
-def total_markup_percent(total_cost):
-    # First band is strict-below (exactly 5 -> next band); every later
-    # band's upper bound is inclusive - same edge rules as documented above.
-    if total_cost < MARGIN_BANDS[0][0]:
-        return MARGIN_BANDS[0][1]
-    for bound, markup in MARGIN_BANDS[1:]:
+def _band_lookup(bands, total_cost):
+    # First range is strict-below (exactly 5 -> next range); every later
+    # range's upper bound is inclusive - same edge rules as documented above.
+    if total_cost < bands[0][0]:
+        return bands[0][1]
+    for bound, profit in bands[1:]:
         if bound is None or total_cost <= bound:
-            return markup
+            return profit
 
 
 def profit_percent(total_cost):
-    """The band's profit share of cost, with the standard fee taken out of
-    the historical total markup."""
-    return max(0, total_markup_percent(total_cost) - PLATFORM_FEE_PERCENT)
+    """The profit percentage the cost range decides."""
+    return _band_lookup(PROFIT_BANDS, total_cost)
 
 
-# Superseded band schedules, newest change last - kept so the sync's
+# Superseded profit schedules, oldest first - kept so the sync's
 # automation-set test (generate_xml._formula_priced) still recognises a
-# price set under an older schedule, letting a band change reprice existing
-# rows instead of freezing them at the old level (max() alone never
-# lowers). Append the outgoing schedule whenever MARGIN_BANDS changes.
-_SUPERSEDED_BANDS = (
-    # until 2026-09-11: above GBP 100 carried a 50 total markup (30% profit)
-    ((5.0, 100), (10.0, 100), (30.0, 60), (100.0, 60), (None, 50)),
+# price set under an older schedule, letting a schedule change reprice
+# existing rows instead of freezing them at the old level (max() alone
+# never lowers). Append the outgoing schedule whenever PROFIT_BANDS
+# changes. (Schedules from the retired total-markup era are recorded here
+# as the profit they actually produced.)
+_SUPERSEDED_PROFIT_BANDS = (
+    # until 2026-09-11 am: 80/80/40/40 with 30% above GBP 100
+    ((5.0, 80), (10.0, 80), (30.0, 40), (100.0, 40), (None, 30)),
+    # 2026-09-11 am: the above-GBP-100 profit cut to 25%, superseded the
+    # same day by the full range rewrite
+    ((5.0, 80), (10.0, 80), (30.0, 40), (100.0, 40), (None, 25)),
 )
 
 
 def legacy_profit_percents(total_cost):
     """Profit percentages a superseded schedule gave this cost, excluding
-    the current band's own value - empty for costs whose band never moved."""
+    the current range's own value - empty for costs whose profit never
+    moved."""
     if total_cost <= 0:
         return []
     current = profit_percent(total_cost)
     out = []
-    for bands in _SUPERSEDED_BANDS:
-        if total_cost < bands[0][0]:
-            markup = bands[0][1]
-        else:
-            markup = next(m for bound, m in bands[1:] if bound is None or total_cost <= bound)
-        profit = max(0, markup - PLATFORM_FEE_PERCENT)
+    for bands in _SUPERSEDED_PROFIT_BANDS:
+        profit = _band_lookup(bands, total_cost)
         if profit != current and profit not in out:
             out.append(profit)
     return out
@@ -215,7 +210,7 @@ def calculate_selling_price(
     platform_fee_percent=None,
     fee_rule=None,
 ):
-    """The band's profit on cost + shipping, retained after OnBuy's
+    """The range's profit on cost + shipping, retained after OnBuy's
     commission: the category's real tier when fee_rule is given, else the
     flat platform_fee_percent (default: the standard 20% assumption)."""
     if cost_price <= 0:
