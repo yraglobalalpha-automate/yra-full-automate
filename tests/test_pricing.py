@@ -16,7 +16,7 @@ BAND_CASES = [
     (5.00, 100), (7.50, 100), (10.00, 100),   # 5-10 (raised from 80, 2026-08-05)
     (10.01, 60), (15.00, 60), (30.00, 60),    # over 10 to 30 inclusive
     (30.01, 60), (75.00, 60), (100.00, 60),   # over 30 to 100 (raised from 40)
-    (100.01, 50), (250.00, 50), (999.00, 50), # above 100 (raised from 40)
+    (100.01, 45), (250.00, 45), (999.00, 45), # above 100 (30% -> 25% profit, 2026-09-11)
 ]
 
 
@@ -30,7 +30,7 @@ def test_profit_percent_strips_the_fee():
     # The band stores the historical TOTAL; profit is that minus the 20% fee.
     assert pricing.profit_percent(3.0) == 80
     assert pricing.profit_percent(20.0) == 40
-    assert pricing.profit_percent(150.0) == 30
+    assert pricing.profit_percent(150.0) == 25
 
 
 PRICE_CASES = [
@@ -39,8 +39,8 @@ PRICE_CASES = [
     (dict(cost_price=20.0), 35.0, "GBP 20 -> 40% profit / 0.8 = x1.75"),
     (dict(cost_price=60.0), 105.0, "GBP 60 -> x1.75"),
     (dict(cost_price=28.0, shipping_cost=4.0), 56.0, "28+4 ship = 32 total -> x1.75"),
-    (dict(cost_price=150.0), 243.75, "GBP 150 -> 30% profit / 0.8 = x1.625"),
-    (dict(cost_price=95.0, shipping_cost=10.0), 170.62, "95+10 = 105 total -> x1.625"),
+    (dict(cost_price=150.0), 234.38, "GBP 150 -> 25% profit / 0.8 = x1.5625"),
+    (dict(cost_price=95.0, shipping_cost=10.0), 164.06, "95+10 = 105 total -> x1.5625"),
     (dict(cost_price=9.0, shipping_cost=0.5), 21.38, "9.50 total -> 80% profit band"),
 ]
 
@@ -74,6 +74,18 @@ def test_higher_category_fee_still_pays_the_band_profit():
 def test_absurd_fee_is_clamped_not_divided_by_zero():
     assert pricing.calculate_selling_price(20.0, platform_fee_percent=100) > 0
     assert pricing.calculate_selling_price(20.0, platform_fee_percent=250) > 0
+
+
+def test_legacy_profit_percents_expose_only_changed_bands():
+    # Above GBP 100 the schedule moved 30% -> 25% profit on 2026-09-11: the
+    # old value must stay recognisable so existing prices reprice down.
+    assert pricing.legacy_profit_percents(150.0) == [30]
+    assert pricing.legacy_profit_percents(100.01) == [30]
+    # Unchanged bands offer no legacy values - and never the current one.
+    assert pricing.legacy_profit_percents(100.0) == []
+    assert pricing.legacy_profit_percents(20.0) == []
+    assert pricing.legacy_profit_percents(3.0) == []
+    assert pricing.legacy_profit_percents(0) == []
 
 
 def test_zero_and_negative_cost():

@@ -21,7 +21,7 @@ unchanged and only the fee arithmetic moved:
   cost + shipping  GBP 5 to 10    -> 80% profit (100% band) -> x2.25
   cost + shipping  GBP 10 to 30   -> 40% profit ( 60% band) -> x1.75
   cost + shipping  GBP 30 to 100  -> 40% profit ( 60% band) -> x1.75
-  cost + shipping  over GBP 100   -> 30% profit ( 50% band) -> x1.625
+  cost + shipping  over GBP 100   -> 25% profit ( 45% band) -> x1.5625
 
 The x multipliers above assume the standard 20% commission; a category
 with a different fee gets its own divisor, so the band's profit portion
@@ -33,7 +33,7 @@ GBP 3 item earned pennies after the fee. The bands apply to the same base
 the markup multiplies (cost + shipping). Band edges: the first bound is
 strict ("under 5"), every later band's upper bound is inclusive - exactly
 GBP 10 falls in the 100% band, exactly GBP 30 and exactly GBP 100 in the
-60% band; strictly above 100 gets 50%. This applies to already-listed
+60% band; strictly above 100 gets 45%. This applies to already-listed
 products too: every sweep recalculates and raises any price below the
 formula (max(existing, formula) in generate_xml.py) - only a manually-set
 price ABOVE the formula is left alone, per the never-lower rule.
@@ -56,7 +56,7 @@ MARGIN_BANDS = (
     (10.0, 100),   # GBP 5-10 inclusive (80% -> 100%, 2026-08-05)
     (30.0, 60),    # over GBP 10 up to 30 inclusive (2026-08-05)
     (100.0, 60),   # over GBP 30 up to 100 inclusive (40% -> 60%, 2026-08-05)
-    (None, 50),    # above GBP 100 (40% -> 50%, 2026-08-05)
+    (None, 45),    # above GBP 100 (30% -> 25% profit, 2026-09-11; was 50 since 2026-08-05)
 )
 
 
@@ -74,6 +74,35 @@ def profit_percent(total_cost):
     """The band's profit share of cost, with the standard fee taken out of
     the historical total markup."""
     return max(0, total_markup_percent(total_cost) - PLATFORM_FEE_PERCENT)
+
+
+# Superseded band schedules, newest change last - kept so the sync's
+# automation-set test (generate_xml._formula_priced) still recognises a
+# price set under an older schedule, letting a band change reprice existing
+# rows instead of freezing them at the old level (max() alone never
+# lowers). Append the outgoing schedule whenever MARGIN_BANDS changes.
+_SUPERSEDED_BANDS = (
+    # until 2026-09-11: above GBP 100 carried a 50 total markup (30% profit)
+    ((5.0, 100), (10.0, 100), (30.0, 60), (100.0, 60), (None, 50)),
+)
+
+
+def legacy_profit_percents(total_cost):
+    """Profit percentages a superseded schedule gave this cost, excluding
+    the current band's own value - empty for costs whose band never moved."""
+    if total_cost <= 0:
+        return []
+    current = profit_percent(total_cost)
+    out = []
+    for bands in _SUPERSEDED_BANDS:
+        if total_cost < bands[0][0]:
+            markup = bands[0][1]
+        else:
+            markup = next(m for bound, m in bands[1:] if bound is None or total_cost <= bound)
+        profit = max(0, markup - PLATFORM_FEE_PERCENT)
+        if profit != current and profit not in out:
+            out.append(profit)
+    return out
 
 
 # ---- category commission tiers (2026-09-09) ---------------------------------

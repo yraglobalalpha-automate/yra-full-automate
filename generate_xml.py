@@ -256,6 +256,12 @@ def _formula_priced(price, cost, ship, fee_rule, profit_override=None, fee_overr
     candidates = [pricing.calculate_selling_price(cost, ship, platform_fee_percent=pricing.PLATFORM_FEE_PERCENT)]
     if fee_rule is not None:
         candidates.append(pricing.calculate_selling_price(cost, ship, fee_rule=fee_rule))
+    # Prices set under a band schedule that has since changed (e.g. the
+    # above-GBP-100 profit cut, 2026-09-11) are still the automation's own.
+    for _legacy in pricing.legacy_profit_percents(total):
+        candidates.append(pricing.price_for_profit(total, _legacy, platform_fee_percent=pricing.PLATFORM_FEE_PERCENT))
+        if fee_rule is not None:
+            candidates.append(pricing.price_for_profit(total, _legacy, rule=fee_rule))
     if profit_override is not None or fee_override is not None:
         profit = profit_override if profit_override is not None else pricing.profit_percent(total)
         if fee_override is not None:
@@ -1699,12 +1705,13 @@ def main():
                           or _formula_priced(existing_price, _to_float(_prev.get("Cost Price (£)")),
                                              _to_float(_prev.get("Shipping Cost (£)")), fee_rule,
                                              profit_override, fee_override))
-        _reprice_basis = (fee_rule is not None or profit_override is not None or fee_override is not None)
+        _reprice_basis = (fee_rule is not None or profit_override is not None or fee_override is not None
+                          or bool(pricing.legacy_profit_percents(_total_cost)))
         if _reprice_basis and automation_set and 0 < formula_price < existing_price:
             selling_price = formula_price
             price_lowered_by_fee += 1
             _basis = ("row overrides" if (profit_override is not None or fee_override is not None)
-                      else fee_rule.name)
+                      else (fee_rule.name if fee_rule is not None else "band change"))
             logger.info("Row %d (SKU %s): formula price follows the %s commission down: %.2f -> %.2f",
                         i, sku, _basis, existing_price, formula_price)
         else:
