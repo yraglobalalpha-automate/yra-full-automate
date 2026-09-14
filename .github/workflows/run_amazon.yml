@@ -1,0 +1,92 @@
+name: Amazon Sync (Keepa)
+
+# The same pipeline as "Generate OnBuy Feed", pointed at the Amazon tab:
+# rows are fetched through Keepa instead of eBay (keepa_client.py), then
+# priced, categorised, pushed to OnBuy and mirrored to Supabase exactly as
+# eBay rows are. Runs on the EVEN hours - this store's eBay sync takes the odd ones -
+# so each hour carries one pipeline's OnBuy pushes (240 calls/hour quota).
+on:
+  schedule:
+    - cron: "13 0-22/2 * * *"   # EVEN hours :13 - THIS store's eBay sync runs the odd hours (:31); the second Keepa key is shared with Arden (odd hours), so the pair never overlaps
+  workflow_dispatch:
+    inputs:
+      recategorize:
+        description: "Let the Amazon category tree overwrite existing categories (yes/no)"
+        default: "no"
+      refresh_all:
+        description: "Set to yes to ALSO re-fetch already-filled rows. Default: manual runs only fill NEW rows"
+        required: false
+        default: ""
+      rows:
+        description: "Only process these Amazon-tab rows, e.g. 2-20 or 5 or 2-10,30-40. Empty = normal run"
+        required: false
+        default: ""
+
+# Same group as every other OnBuy-touching workflow: one token, one quota.
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run script
+        env:
+          SHEET_TAB: Amazon
+          FEED_FILE: feed_amazon.xml
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
+          KEEPA_BUYBOX: ${{ vars.KEEPA_BUYBOX }}
+          KEEPA_UPDATE_HOURS: ${{ vars.KEEPA_UPDATE_HOURS }}
+          AMAZON_DEFAULT_STOCK: ${{ vars.AMAZON_DEFAULT_STOCK }}
+          # eBay credentials stay available for a mixed batch; an all-Amazon
+          # batch never requests an eBay token.
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          RECATEGORIZE_FROM_TYPE: ${{ inputs.recategorize == 'yes' && '1' || '' }}
+          ROWS_RANGE: ${{ inputs.rows }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+          ONBUY_API_PUSH_ENABLED: ${{ vars.ONBUY_API_PUSH_ENABLED }}
+          ONBUY_CREATE_ENABLED: ${{ vars.ONBUY_CREATE_ENABLED }}
+          ONBUY_API_TEST_SKUS: ${{ vars.AMAZON_TEST_SKUS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          # Keepa costs 1 token per row (2,000 rows x 12 runs = 24,000 of the
+          # Starter plan's 28,800 a day), so the batch is a plain cap here,
+          # not the eBay budget maths.
+          MAX_PRODUCTS_PER_RUN: ${{ vars.AMAZON_MAX_PRODUCTS_PER_RUN || '300' }}
+          RUNS_PER_DAY: ${{ vars.RUNS_PER_DAY || '12' }}
+          EBAY_DAILY_CALL_BUDGET: ${{ vars.EBAY_DAILY_CALL_BUDGET }}
+          FEE_MODE: ${{ vars.FEE_MODE }}
+          FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
+          REFRESH_ALL: ${{ inputs.refresh_all }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_FEED_BUCKET: ${{ vars.SUPABASE_FEED_BUCKET }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          ALERT_EMAIL_FROM: ${{ vars.ALERT_EMAIL_FROM }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+        run: python generate_xml.py

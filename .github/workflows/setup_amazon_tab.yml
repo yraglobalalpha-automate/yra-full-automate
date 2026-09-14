@@ -1,0 +1,29 @@
+name: Setup Amazon Tab (one-off)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tab:
+        description: "Worksheet name to create/complete"
+        required: false
+        default: "Amazon"
+
+# Writes ONLY row 1 of the named tab (creating the tab if missing) - no
+# OnBuy, no Keepa, so it stays outside the onbuy-api group.
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Setup tab
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SHEET_TAB: ${{ inputs.tab }}
+        run: python setup_amazon_tab.py

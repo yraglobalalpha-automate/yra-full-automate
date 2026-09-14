@@ -1,0 +1,38 @@
+name: Probe Keepa (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: "Sheet rows of the Amazon tab to look at, e.g. 2-50 (empty = every row with a link)"
+        required: false
+        default: ""
+      tab:
+        description: "Worksheet name"
+        required: false
+        default: "Amazon"
+
+# Reads the sheet and Keepa only - nothing here touches OnBuy, so it stays
+# outside the onbuy-api group.
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Probe
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
+          KEEPA_BUYBOX: ${{ vars.KEEPA_BUYBOX }}
+          KEEPA_UPDATE_HOURS: ${{ vars.KEEPA_UPDATE_HOURS }}
+          AMAZON_DEFAULT_STOCK: ${{ vars.AMAZON_DEFAULT_STOCK }}
+          SHEET_TAB: ${{ inputs.tab }}
+          ROWS: ${{ inputs.rows }}
+        run: python probe_keepa.py

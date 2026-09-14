@@ -1,0 +1,34 @@
+name: Dump Sheet Rows (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tab:
+        description: "Worksheet name (empty = first tab)"
+        required: false
+        default: "Amazon"
+      rows:
+        description: "Rows for per-row detail, e.g. 195-320 (empty = summary only)"
+        required: false
+        default: ""
+
+# Reads the Google Sheet only - no OnBuy, no Keepa, no writes anywhere -
+# so it stays outside the onbuy-api group and is safe alongside any run.
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Dump
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SHEET_TAB: ${{ inputs.tab }}
+          ROWS: ${{ inputs.rows }}
+        run: python dump_rows.py
