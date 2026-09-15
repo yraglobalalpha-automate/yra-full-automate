@@ -12,6 +12,15 @@ that exists (default "Amazon" - the Amazon tab shares the header row and
 gets its OPCs the same way, 2026-09-09). The queue history is paged once
 for all tabs together.
 
+ALSO (2026-09-14): imports already-listed products. A row seeded with an
+OPC + Supplier URL and NO SKU means "this product is already live on
+OnBuy - bring it under sync": the account's listings are paged once,
+the OPC's own SKU is fetched from OnBuy and written into the row, and the
+row is marked Synced/created so every later sync run treats it strictly
+update-only (the anti-duplicate guard: an OPC on record never re-creates).
+A fetched SKU that already exists anywhere on the sheet is refused and
+flagged instead - one product, one row. BACKFILL_IMPORT_OPC=0 disables.
+
 NOTE: this is a first version against a real but only lightly-tested OnBuy
 endpoint - the queue_id filter on GET /v2/queues didn't actually filter
 anything in testing (every value returned the same recent history), so this
@@ -28,11 +37,14 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 import supabase_db
 from generate_xml import col_letter
-from onbuy_client import OnBuyClient
+from onbuy_client import BASE_URL, OnBuyClient
+from retry_utils import raise_for_status, with_retry
 
 MAX_PAGES = int(os.getenv("BACKFILL_MAX_PAGES") or "20")
 PAGE_SIZE = 50
 EXTRA_TABS = [t.strip() for t in (os.getenv("BACKFILL_EXTRA_TABS") or "Amazon").split(",") if t.strip()]
+IMPORT_OPC = (os.getenv("BACKFILL_IMPORT_OPC") or "1").strip().lower() not in ("0", "no", "false")
+IMPORT_MAX_PAGES = int(os.getenv("BACKFILL_IMPORT_MAX_PAGES") or "120")
 
 POISONED_TEXT = "Failed: rejected with no reason given by OnBuy"
 
@@ -156,6 +168,144 @@ def pending_rows(tab):
     return pending, poisoned
 
 
+def _listing_opc(item):
+    """The OPC of one GET /v2/listings item. OnBuy's exact field name is
+    verified from the first real run's key log (see fetch_opc_sku_map) -
+    every observed spelling is tried."""
+    item = item or {}
+    for key in ("opc", "product_opc", "onbuy_product_code"):
+        val = str(item.get(key) or "").strip().upper()
+        if val:
+            return val
+    product = item.get("product")
+    if isinstance(product, dict):
+        val = str(product.get("opc") or product.get("code") or "").strip().upper()
+        if val:
+            return val
+    return ""
+
+
+def _import_candidates(data):
+    """[(data index, OPC)] for rows seeded for import: a real OPC (not the
+    backfill's own PENDING marker), a Supplier URL, and NO SKU yet."""
+    out = []
+    for idx, row in enumerate(data):
+        sku = str(row.get("SKU") or "").replace(",", "").strip()
+        opc = str(row.get("OPC") or "").strip().upper()
+        url = str(row.get("Supplier URL") or "").strip()
+        if not sku and url and opc and opc != "PENDING":
+            out.append((idx, opc))
+    return out
+
+
+def fetch_opc_sku_map(onbuy):
+    """OPC -> SKU for every listing on this OnBuy account (paged once).
+    Logs the first item's keys so the field spelling _listing_opc relies on
+    is verifiable from the run log. Raises on a page error - a HALF-built
+    map must never mark unmatched OPCs as not-found."""
+    mapping = {}
+    offset = 0
+    for _page in range(IMPORT_MAX_PAGES):
+        def _do(off=offset):
+            resp = onbuy._send("GET", f"{BASE_URL}/listings", what=f"listings page {off}",
+                               params={"site_id": onbuy.site_id, "limit": 100, "offset": off},
+                               timeout=60)
+            raise_for_status(resp, what=f"listings page {off}")
+            return resp
+        body = with_retry(_do, what=f"listings page {offset}", max_attempts=3).json()
+        items = body.get("results") if isinstance(body, dict) else body
+        if not isinstance(items, list) or not items:
+            break
+        if offset == 0 and items:
+            print(f"[opc-import] first listing item keys: {sorted((items[0] or {}).keys())}")
+        for item in items:
+            sku = str((item or {}).get("sku") or "").strip()
+            opc = _listing_opc(item)
+            if sku and opc:
+                mapping[opc] = sku
+        if len(items) < 100:
+            break
+        offset += 100
+    print(f"[opc-import] listings swept: {len(mapping)} OPC->SKU pairs")
+    return mapping
+
+
+def import_opc_rows(tabs, onbuy):
+    """Fill the SKU (from OnBuy) on OPC-seeded rows and mark them Synced.
+    Writes are anchored to the OPC's CURRENT row (re-located just before
+    writing) - these rows have no SKU, so remap_row_writes cannot protect
+    them and they must not ride tab["updates"]."""
+    per_tab = {}
+    for tab in tabs:
+        cands = _import_candidates(tab["data"])
+        if cands and "OPC" in tab["col_map"]:
+            per_tab[tab["sheet"].title] = (tab, cands)
+    if not per_tab:
+        return False
+    total = sum(len(c) for _t, c in per_tab.values())
+    print(f"[opc-import] {total} OPC-seeded row(s) to import: "
+          + ", ".join(f"{t}: {len(c)}" for t, (_tab, c) in per_tab.items()))
+
+    try:
+        opc_to_sku = fetch_opc_sku_map(onbuy)
+    except Exception as exc:
+        print(f"[opc-import] listings sweep failed ({str(exc)[:200]}) - imports retried next hourly run")
+        return True
+
+    taken = set()   # SKUs already on the sheet anywhere, plus ones claimed this run
+    for tab in tabs:
+        for row in tab["data"]:
+            sku = str(row.get("SKU") or "").replace(",", "").strip()
+            if sku:
+                taken.add(sku)
+
+    for title, (tab, cands) in per_tab.items():
+        sheet, col_map = tab["sheet"], tab["col_map"]
+        # Re-locate each OPC's current row right before writing: the sheet
+        # may have moved since read_tab, and a SKU-less row has no other
+        # anchor. An OPC missing or duplicated in the fresh column is
+        # skipped (redone next hourly run).
+        fresh = sheet.col_values(col_map["OPC"])
+        pos = {}
+        for _i, _v in enumerate(fresh):
+            _v = str(_v).strip().upper()
+            if _i and _v and _v != "PENDING":
+                pos.setdefault(_v, []).append(_i + 1)
+        updates, imported, dropped = [], 0, 0
+        for _idx, opc in cands:
+            where = pos.get(opc) or []
+            if len(where) != 1:
+                dropped += 1
+                continue
+            n = where[0]
+            sku = opc_to_sku.get(opc)
+            if not sku:
+                if "Sync Status" in col_map:
+                    updates.append({"range": f"{col_letter(col_map['Sync Status'])}{n}",
+                                    "values": [["Failed: OPC not found among this account's OnBuy listings"]]})
+                print(f"[opc-import] {title} row {n}: OPC {opc} not on this account")
+                continue
+            if sku in taken:
+                if "Sync Status" in col_map:
+                    updates.append({"range": f"{col_letter(col_map['Sync Status'])}{n}",
+                                    "values": [[f"Failed: OPC {opc} maps to SKU {sku} which is already on the sheet - one product, one row"]]})
+                print(f"[opc-import] {title} row {n}: OPC {opc} -> SKU {sku} already on the sheet")
+                continue
+            taken.add(sku)
+            updates.append({"range": f"{col_letter(col_map['SKU'])}{n}", "values": [[sku]]})
+            if "Sync Status" in col_map:
+                updates.append({"range": f"{col_letter(col_map['Sync Status'])}{n}", "values": [["Synced"]]})
+            if "OnBuy Product Created" in col_map:
+                updates.append({"range": f"{col_letter(col_map['OnBuy Product Created'])}{n}", "values": [["TRUE"]]})
+            imported += 1
+            print(f"[opc-import] {title} row {n}: OPC {opc} -> SKU {sku} imported "
+                  f"(next sync run prices it from its supplier link and updates the listing)")
+        if updates:
+            sheet.batch_update(updates)
+        print(f"[opc-import] {title}: {imported} imported, {dropped} deferred (row moved/OPC ambiguous)")
+    return True
+
+
 def main():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
@@ -186,17 +336,25 @@ def main():
         tabs.append(tab)
         print(f"[{sheet.title}] {len(pending)} pending SKU(s)")
 
-    if not all_pending:
-        print("No rows needing a queue-status check found - nothing to do.")
+    has_imports = IMPORT_OPC and any(_import_candidates(tab["data"]) for tab in tabs)
+    if not all_pending and not has_imports:
+        print("No rows needing a queue-status check and no OPC-seeded rows - nothing to do.")
         return
-
-    print(f"Checking {len(all_pending)} pending SKU(s) against OnBuy's queue history...")
 
     use_sandbox = os.getenv("ONBUY_USE_SANDBOX", "false").strip().lower() == "true"
     onbuy = OnBuyClient(use_sandbox=use_sandbox)
     if not onbuy.authenticate():
         print("FAILED to authenticate with OnBuy")
         raise SystemExit(1)
+
+    if has_imports:
+        import_opc_rows(tabs, onbuy)
+
+    if not all_pending:
+        print("No rows needing a queue-status check found - done.")
+        return
+
+    print(f"Checking {len(all_pending)} pending SKU(s) against OnBuy's queue history...")
 
     found = {}
     offset = 0
