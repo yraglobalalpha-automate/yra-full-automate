@@ -1,0 +1,107 @@
+name: Repair Chain (dedupe + price fix, server-side)
+
+# The 2026-09-17 mispricing repair as sequential server-side jobs: pause
+# the store's scheduled workflows, list duplicate-SKU rows (evidence),
+# delete the later duplicates (originals kept), push the sheet's correct
+# price/stock onto every drifted live listing, then restore schedules -
+# even when a middle job fails. Laptop-independent by design.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tab:
+        description: "Worksheet to dedupe"
+        required: false
+        default: "Amazon"
+
+permissions:
+  actions: write
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  pause:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pause scheduled workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for wf in run.yml run_amazon.yml backfill_onbuy_status.yml buybox_defense.yml; do
+            gh workflow disable $wf -R ${{ github.repository }} && echo "paused $wf" || echo "skip $wf"
+          done
+
+  dedupe_dry:
+    needs: pause
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: List duplicate rows (evidence)
+        env:
+          DRY_RUN: "1"
+          SHEET_TAB: ${{ inputs.tab }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: python remove_duplicate_sku_rows.py
+
+  dedupe_live:
+    needs: dedupe_dry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Delete duplicate rows (originals kept)
+        env:
+          DRY_RUN: "0"
+          SHEET_TAB: ${{ inputs.tab }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: python remove_duplicate_sku_rows.py
+
+  audit_fix:
+    needs: dedupe_live
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Push sheet price/stock onto drifted listings
+        env:
+          FIX: "1"
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: python audit_price_drift.py
+
+  restore:
+    needs: [pause, audit_fix]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-enable scheduled workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for wf in run.yml run_amazon.yml backfill_onbuy_status.yml buybox_defense.yml; do
+            gh workflow enable $wf -R ${{ github.repository }} && echo "enabled $wf" || echo "skip $wf"
+          done

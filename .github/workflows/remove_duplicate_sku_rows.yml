@@ -1,0 +1,35 @@
+name: Remove Duplicate SKU Rows (one-off)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List duplicate rows without deleting (yes/no)"
+        default: "yes"
+      tab:
+        description: "Worksheet to dedupe"
+        required: false
+        default: "Amazon"
+
+# Deletes Sheet rows - serialize with the syncs like every sheet writer.
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  dedupe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Remove duplicate rows
+        env:
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+          SHEET_TAB: ${{ inputs.tab }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: python remove_duplicate_sku_rows.py
