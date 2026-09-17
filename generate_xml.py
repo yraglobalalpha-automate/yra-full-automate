@@ -1641,13 +1641,14 @@ def main():
     amazon_asin_rows = {}  # first row seen per ASIN - later ones are duplicates
 
     # ============ NEW-SKU UNIQUENESS GUARD (2026-09-17, user request) ========
-    # A new product must never reuse a SKU that already exists anywhere on
-    # the sheet or as a live listing on the account (the Makstore UPC
-    # incident: two rows under one SKU are ONE OnBuy listing flip-flopping
-    # between two products). Sheet side: every tab's SKU column counted once
-    # per run - a count above 1 freezes every row involved. OnBuy side: the
-    # account's live SKUs, swept only when this batch would actually CREATE
-    # something. Both fail OPEN: a read error only logs and skips the check.
+    # A SKU on more than one sheet row (any tab, any supplier) is ONE OnBuy
+    # listing flip-flopping between two products (the Makstore UPC
+    # incident) - every row involved freezes until a human picks one. A
+    # SINGLE row whose SKU already lives on the account is NOT an error:
+    # that is the adoption flow (user 2026-09-17 - sync existing products
+    # by their exact SKU or OPC + supplier link), and the create path's
+    # check_winning probe adopts it via plain update instead of creating a
+    # duplicate. Fails OPEN: a read error only logs and skips the check.
     all_sku_counts = {}
     try:
         for _ws in spreadsheet.worksheets():
@@ -1661,40 +1662,6 @@ def main():
     except Exception as exc:  # noqa: BLE001 - advisory guard, never fatal
         logger.warning("SKU guard: sheet-wide count failed (%s) - duplicate check off this run", str(exc)[:120])
         all_sku_counts = {}
-
-    def _row_looks_created(_row):
-        _opc = str(_row.get("OPC") or "").strip().upper()
-        return (_opc not in ("", "PENDING")
-                or str(_row.get("OnBuy Product Created") or "").strip().upper() == "TRUE"
-                or str(_row.get("Sync Status") or "").strip().startswith(("Synced", "Pending Approval", "Awaiting")))
-
-    onbuy_live_skus = set()
-    if onbuy_ready and any(not _row_looks_created(_r) for _i2, _r in batch):
-        from onbuy_client import BASE_URL as _guard_base
-        try:
-            _off = 0
-            while True:
-                def _guard_page(off=_off):
-                    _resp = onbuy._send("GET", f"{_guard_base}/listings", what=f"guard listings page {off}",
-                                        params={"site_id": onbuy.site_id, "limit": 100, "offset": off},
-                                        timeout=60)
-                    _resp.raise_for_status()
-                    return _resp
-                _body = with_retry(_guard_page, what=f"guard listings page {_off}", max_attempts=3).json()
-                _items = _body.get("results") if isinstance(_body, dict) else _body
-                if not isinstance(_items, list) or not _items:
-                    break
-                for _it in _items:
-                    _s = str((_it or {}).get("sku") or "").strip()
-                    if _s:
-                        onbuy_live_skus.add(_s)
-                if len(_items) < 100:
-                    break
-                _off += 100
-            logger.info("SKU guard: %d live listing SKU(s) swept for the new-product check", len(onbuy_live_skus))
-        except Exception as exc:  # noqa: BLE001 - advisory guard, never fatal
-            logger.warning("SKU guard: listings sweep failed (%s) - OnBuy-side check off this run", str(exc)[:120])
-            onbuy_live_skus = set()
     amazon_asins = sorted({keepa_client.parse_asin(row.get("Supplier URL"))
                            for _, row in batch if supplier_of(row.get("Supplier URL")) == "Amazon"})
     if amazon_asins:
@@ -1800,15 +1767,11 @@ def main():
                 amazon_flag = f"Failed: ASIN {_dup_asin} is already used on row {_first_row} - one Amazon product per row"
                 logger.warning("Row %d (SKU %s): %s", i, sku, amazon_flag)
         # Uniqueness guard (2026-09-17), every supplier and tab: a SKU on
-        # more than one sheet row freezes them ALL until a human picks one;
-        # a NEW product whose SKU already has a live listing outside this
-        # sheet must not create over it.
+        # more than one sheet row freezes them ALL until a human picks one.
+        # A single row reusing a LIVE account SKU is adoption, not an error
+        # - the create path detects it and updates the existing listing.
         if not amazon_flag and sku and all_sku_counts.get(sku, 0) > 1:
             amazon_flag = f"Failed: SKU appears on {all_sku_counts[sku]} sheet rows - one product per SKU"
-            logger.warning("Row %d (SKU %s): %s", i, sku, amazon_flag)
-        if (not amazon_flag and sku and onbuy_live_skus
-                and sku in onbuy_live_skus and not _row_looks_created(row)):
-            amazon_flag = "Failed: SKU already has a live OnBuy listing outside this sheet - use a fresh barcode"
             logger.warning("Row %d (SKU %s): %s", i, sku, amazon_flag)
         # The categoriser reads text; Amazon's category tree is the best
         # hint it can get, so it rides along with the description here only.
