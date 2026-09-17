@@ -1639,6 +1639,62 @@ def main():
     # leaves those rows untouched this run, like an eBay fetch failure.
     amazon_products, amazon_fetch_failed, ebay_tab_skus = {}, False, set()
     amazon_asin_rows = {}  # first row seen per ASIN - later ones are duplicates
+
+    # ============ NEW-SKU UNIQUENESS GUARD (2026-09-17, user request) ========
+    # A new product must never reuse a SKU that already exists anywhere on
+    # the sheet or as a live listing on the account (the Makstore UPC
+    # incident: two rows under one SKU are ONE OnBuy listing flip-flopping
+    # between two products). Sheet side: every tab's SKU column counted once
+    # per run - a count above 1 freezes every row involved. OnBuy side: the
+    # account's live SKUs, swept only when this batch would actually CREATE
+    # something. Both fail OPEN: a read error only logs and skips the check.
+    all_sku_counts = {}
+    try:
+        for _ws in spreadsheet.worksheets():
+            _wh = [str(h).strip() for h in _ws.row_values(1)]
+            if "SKU" not in _wh:
+                continue
+            for _v in _ws.col_values(_wh.index("SKU") + 1)[1:]:
+                _v = str(_v).replace(",", "").strip()
+                if _v:
+                    all_sku_counts[_v] = all_sku_counts.get(_v, 0) + 1
+    except Exception as exc:  # noqa: BLE001 - advisory guard, never fatal
+        logger.warning("SKU guard: sheet-wide count failed (%s) - duplicate check off this run", str(exc)[:120])
+        all_sku_counts = {}
+
+    def _row_looks_created(_row):
+        _opc = str(_row.get("OPC") or "").strip().upper()
+        return (_opc not in ("", "PENDING")
+                or str(_row.get("OnBuy Product Created") or "").strip().upper() == "TRUE"
+                or str(_row.get("Sync Status") or "").strip().startswith(("Synced", "Pending Approval", "Awaiting")))
+
+    onbuy_live_skus = set()
+    if onbuy_ready and any(not _row_looks_created(_r) for _i2, _r in batch):
+        from onbuy_client import BASE_URL as _guard_base
+        try:
+            _off = 0
+            while True:
+                def _guard_page(off=_off):
+                    _resp = onbuy._send("GET", f"{_guard_base}/listings", what=f"guard listings page {off}",
+                                        params={"site_id": onbuy.site_id, "limit": 100, "offset": off},
+                                        timeout=60)
+                    _resp.raise_for_status()
+                    return _resp
+                _body = with_retry(_guard_page, what=f"guard listings page {_off}", max_attempts=3).json()
+                _items = _body.get("results") if isinstance(_body, dict) else _body
+                if not isinstance(_items, list) or not _items:
+                    break
+                for _it in _items:
+                    _s = str((_it or {}).get("sku") or "").strip()
+                    if _s:
+                        onbuy_live_skus.add(_s)
+                if len(_items) < 100:
+                    break
+                _off += 100
+            logger.info("SKU guard: %d live listing SKU(s) swept for the new-product check", len(onbuy_live_skus))
+        except Exception as exc:  # noqa: BLE001 - advisory guard, never fatal
+            logger.warning("SKU guard: listings sweep failed (%s) - OnBuy-side check off this run", str(exc)[:120])
+            onbuy_live_skus = set()
     amazon_asins = sorted({keepa_client.parse_asin(row.get("Supplier URL"))
                            for _, row in batch if supplier_of(row.get("Supplier URL")) == "Amazon"})
     if amazon_asins:
@@ -1743,6 +1799,17 @@ def main():
             if _first_row != i:
                 amazon_flag = f"Failed: ASIN {_dup_asin} is already used on row {_first_row} - one Amazon product per row"
                 logger.warning("Row %d (SKU %s): %s", i, sku, amazon_flag)
+        # Uniqueness guard (2026-09-17), every supplier and tab: a SKU on
+        # more than one sheet row freezes them ALL until a human picks one;
+        # a NEW product whose SKU already has a live listing outside this
+        # sheet must not create over it.
+        if not amazon_flag and sku and all_sku_counts.get(sku, 0) > 1:
+            amazon_flag = f"Failed: SKU appears on {all_sku_counts[sku]} sheet rows - one product per SKU"
+            logger.warning("Row %d (SKU %s): %s", i, sku, amazon_flag)
+        if (not amazon_flag and sku and onbuy_live_skus
+                and sku in onbuy_live_skus and not _row_looks_created(row)):
+            amazon_flag = "Failed: SKU already has a live OnBuy listing outside this sheet - use a fresh barcode"
+            logger.warning("Row %d (SKU %s): %s", i, sku, amazon_flag)
         # The categoriser reads text; Amazon's category tree is the best
         # hint it can get, so it rides along with the description here only.
         category_text = description if supplier != "Amazon" else f"{description} {ebay_data.get('category_path') or ''}"
@@ -2221,7 +2288,8 @@ def main():
         # automation's own value - a manual override stays exactly as typed.
         if "Fee %" in col_map and fee_override is None:
             _fee_shown = (pricing.effective_fee_percent(selling_price, fee_rule) if selling_price > 0
-                          else (fee_rule.lower_pct if fee_rule else float(pricing.PLATFORM_FEE_PERCENT)))
+                          else ((fee_rule.lower_pct if fee_rule else float(pricing.PLATFORM_FEE_PERCENT))
+                                + pricing.FEE_UPLIFT_PERCENT))
             row_updates.append({"range": f"{col_letter(col_map['Fee %'])}{i}",
                                 "values": [[f"{_fee_shown:.2f}"]]})
         if "Profit %" in col_map and profit_override is None:
@@ -2285,7 +2353,8 @@ def main():
             "Profit %": str(int(round(_band_now or 0))),
             "Fee %": str(int(round(pricing.effective_fee_percent(selling_price, fee_rule)
                                    if selling_price > 0 else
-                                   (fee_rule.lower_pct if fee_rule else pricing.PLATFORM_FEE_PERCENT)))),
+                                   ((fee_rule.lower_pct if fee_rule else pricing.PLATFORM_FEE_PERCENT)
+                                    + pricing.FEE_UPLIFT_PERCENT)))),
             "Stock": stock,
             "Selling Price (£)": selling_price,
             "Status": "ACTIVE" if stock > 0 else "INACTIVE",

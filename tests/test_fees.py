@@ -75,27 +75,29 @@ def test_category_mode_without_tables_falls_back(monkeypatch, tmp_path):
 
 def test_flat_rule_prices_like_a_divisor():
     elec = pricing.FeeRule("Consumer Electronics", 7)
-    # GBP 20 cost -> 40% profit band -> retain 28.00 -> 28 / 0.93
-    assert pricing.calculate_selling_price(20.0, fee_rule=elec) == 30.11
-    assert pricing.calculate_selling_price(20.0) == 35.0          # flat 20% unchanged
-    assert abs(pricing.effective_fee_percent(30.11, elec) - 7.0) < 0.01
+    # GBP 20 cost -> 40% profit band -> retain 28.00; the 1.5-point uplift
+    # (2026-09-17) makes the nominal 7% a real 8.5% -> 28 / 0.915
+    assert pricing.calculate_selling_price(20.0, fee_rule=elec) == 30.60
+    assert pricing.calculate_selling_price(20.0) == 35.67         # flat 20 + 1.5 -> /0.785
+    assert abs(pricing.effective_fee_percent(30.60, elec) - 8.5) < 0.01
 
 
 def test_tiered_rule_marginal():
     acc = pricing.FeeRule("Electronic Accessories", 15, 8, 100.0, 0.25)
-    assert abs(pricing.price_for_retained(50.0, acc, "marginal") - 50 / 0.85) < 0.001
-    # above the threshold: P = (200 + 100 x (0.15 - 0.08)) / 0.92 = 225.00,
-    # and 15% of 100 + 8% of 125 = 25.00 leaves exactly 200.00
+    # uplifted: 16.5% below the threshold, 9.5% above
+    assert abs(pricing.price_for_retained(50.0, acc, "marginal") - 50 / 0.835) < 0.001
+    # above the threshold: P = (200 + 100 x (0.165 - 0.095)) / 0.905, and
+    # the marginal fee on that price leaves exactly 200.00
     price = pricing.price_for_retained(200.0, acc, "marginal")
-    assert abs(price - 225.0) < 0.001
-    assert abs(pricing.fee_amount(price, acc, "marginal") - 25.0) < 0.001
+    assert abs(price - 207 / 0.905) < 0.001
+    assert abs(pricing.fee_amount(price, acc, "marginal") - (price - 200.0)) < 0.001
 
 
 def test_tiered_rule_step_and_the_gap():
     acc = pricing.FeeRule("Electronic Accessories", 15, 8, 100.0, 0.25)
     price = pricing.price_for_retained(200.0, acc, "step")
-    assert abs(price - 200 / 0.92) < 0.001
-    assert abs(pricing.fee_amount(price, acc, "step") - price * 0.08) < 0.001
+    assert abs(price - 200 / 0.905) < 0.001
+    assert abs(pricing.fee_amount(price, acc, "step") - price * 0.095) < 0.001
     jewel = pricing.FeeRule("Jewellery", 20, 5, 225.0, 0.25)
     # retain 190: 20% needs 237.50 (> 225) but 5% would need 200 (<= 225) -
     # no price fits either rate, so the first price past the threshold wins
@@ -111,5 +113,5 @@ def test_minimum_fee_binds_on_tiny_prices():
 
 def test_price_for_profit_and_buy_box_floor():
     elec = pricing.FeeRule("Consumer Electronics", 7)
-    assert pricing.price_for_profit(20.0, 15, elec) == 24.73        # 23 / 0.93
-    assert pricing.price_for_profit(20.0, 15) == 28.75              # 23 / 0.80 (flat)
+    assert pricing.price_for_profit(20.0, 15, elec) == 25.14        # 23 / 0.915
+    assert pricing.price_for_profit(20.0, 15) == 29.30              # 23 / 0.785 (flat)

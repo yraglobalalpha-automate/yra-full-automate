@@ -38,6 +38,16 @@ the automation set under a SUPERSEDED schedule follows the formula down
 
 import os
 
+# What OnBuy actually deducts runs ABOVE the tier's nominal rate (user
+# observation 2026-09-17: a 7% category deducted 8.4%, a 15% one 16.5%) -
+# the platform charges on top of the listed commission. Policy: add 1.5
+# percentage points to EVERY commission rate the formula divides by, flat
+# fallback included, so the retained amount survives the real deduction.
+# FeeRule keeps the nominal rate (it mirrors OnBuy's own tier data); the
+# uplift is applied only where fees are COMPUTED, so Fee % columns show
+# the real effective rate (e.g. 16.50, not 15.00).
+FEE_UPLIFT_PERCENT = float(os.getenv("FEE_UPLIFT_PERCENT") or "1.5")
+
 MIN_PROFIT_PERCENT = 20
 # The flat assumption the formula grew up with. OnBuy's real commission is
 # per category (7% - 20%, most 15%, see fees.py); this stays the fallback
@@ -140,15 +150,15 @@ def fee_amount(price, rule=None, mode=None):
     if price <= 0:
         return 0.0
     if rule is None:
-        return price * PLATFORM_FEE_PERCENT / 100.0
+        return price * (PLATFORM_FEE_PERCENT + FEE_UPLIFT_PERCENT) / 100.0
     mode = (mode or FEE_TIER_MODE)
-    r1 = rule.lower_pct / 100.0
+    r1 = (rule.lower_pct + FEE_UPLIFT_PERCENT) / 100.0
     if not rule.tiered or price <= rule.threshold:
         fee = price * r1
     elif mode == "step":
-        fee = price * rule.upper_pct / 100.0
+        fee = price * (rule.upper_pct + FEE_UPLIFT_PERCENT) / 100.0
     else:
-        fee = rule.threshold * r1 + (price - rule.threshold) * rule.upper_pct / 100.0
+        fee = rule.threshold * r1 + (price - rule.threshold) * (rule.upper_pct + FEE_UPLIFT_PERCENT) / 100.0
     return max(fee, rule.min_fee)
 
 
@@ -159,12 +169,12 @@ def price_for_retained(retained, rule=None, mode=None):
     if retained <= 0:
         return 0.0
     if rule is None:
-        return retained / (1 - PLATFORM_FEE_PERCENT / 100.0)
+        return retained / (1 - (PLATFORM_FEE_PERCENT + FEE_UPLIFT_PERCENT) / 100.0)
     mode = (mode or FEE_TIER_MODE)
-    r1 = rule.lower_pct / 100.0
+    r1 = (rule.lower_pct + FEE_UPLIFT_PERCENT) / 100.0
     price = retained / (1 - r1)
     if rule.tiered and price > rule.threshold:
-        r2 = rule.upper_pct / 100.0
+        r2 = (rule.upper_pct + FEE_UPLIFT_PERCENT) / 100.0
         if mode == "step":
             above = retained / (1 - r2)
             # A falling tier (20% then 5%) can leave a gap where no price is
@@ -191,7 +201,7 @@ def price_for_profit(total_cost, profit_pct, rule=None, platform_fee_percent=Non
     retained = total_cost * (1 + profit_pct / 100.0)
     if rule is not None and platform_fee_percent is None:
         return round(price_for_retained(retained, rule), 2)
-    fee = min(max(float(PLATFORM_FEE_PERCENT if platform_fee_percent is None else platform_fee_percent), 0.0), 95.0) / 100.0
+    fee = min(max(float(PLATFORM_FEE_PERCENT if platform_fee_percent is None else platform_fee_percent) + FEE_UPLIFT_PERCENT, 0.0), 95.0) / 100.0
     return round(retained / (1 - fee), 2)
 
 
@@ -224,5 +234,5 @@ def calculate_selling_price(
     # clamp keeps a nonsense override (>= 100% commission) from inverting
     # the price or dividing by zero mid-run; 95% is already far outside any
     # real OnBuy category.
-    fee = min(max(float(PLATFORM_FEE_PERCENT if platform_fee_percent is None else platform_fee_percent), 0.0), 95.0) / 100.0
+    fee = min(max(float(PLATFORM_FEE_PERCENT if platform_fee_percent is None else platform_fee_percent) + FEE_UPLIFT_PERCENT, 0.0), 95.0) / 100.0
     return round(retained / (1 - fee), 2)
