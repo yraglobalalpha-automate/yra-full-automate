@@ -1651,7 +1651,19 @@ def main():
     # duplicate. Fails OPEN: a read error only logs and skips the check.
     all_sku_counts = {}
     try:
-        for _ws in spreadsheet.worksheets():
+        # PRODUCT tabs only (the first/eBay tab and the Amazon tab). System
+        # tabs carry a SKU column too - BuyBox mirrors every tracked
+        # listing - and counting them made a single legitimate adoption row
+        # look duplicated (Makstore 2026-09-17: "appears on 2 sheet rows"
+        # on rows that exist once, their twin being the BuyBox tracker).
+        _product_tabs = [spreadsheet.sheet1]
+        try:
+            _amz_tab = spreadsheet.worksheet("Amazon")
+            if _amz_tab.title != _product_tabs[0].title:
+                _product_tabs.append(_amz_tab)
+        except gspread.exceptions.WorksheetNotFound:
+            pass
+        for _ws in _product_tabs:
             _wh = [str(h).strip() for h in _ws.row_values(1)]
             if "SKU" not in _wh:
                 continue
