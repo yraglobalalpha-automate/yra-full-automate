@@ -51,7 +51,18 @@ def sheet_rows():
             except (TypeError, ValueError):
                 stock = 0
             out.setdefault(sku, (price, stock, tab.title, idx + 2))
-    return out
+    defended = set()
+    try:
+        bb = book.worksheet("BuyBox")
+        # Row 1 is the header and row 2 the run-summary meta row -
+        # contested SKUs start at row 3 (buybox_defense.py's writer).
+        defended = {str(v).replace(",", "").strip() for v in bb.col_values(1)[2:]}
+        defended.discard("")
+    except gspread.exceptions.WorksheetNotFound:
+        pass
+    except Exception as exc:  # noqa: BLE001 - advisory, never fatal
+        log.warning("BuyBox tab read failed (%s) - defended-SKU exclusion off", str(exc)[:100])
+    return out, defended
 
 
 def live_listings(onbuy):
@@ -91,11 +102,11 @@ def main():
     onbuy = OnBuyClient()
     if not onbuy.authenticate():
         raise SystemExit("OnBuy auth failed")
-    sheet = sheet_rows()
+    sheet, defended = sheet_rows()
     live = live_listings(onbuy)
     log.info("sheet rows with SKU: %d | live listings: %d", len(sheet), len(live))
 
-    under, over, stock_off = [], [], []
+    under, over, stock_off, under_def = [], [], [], []
     for sku, (lp, lstock, upd) in live.items():
         if sku not in sheet:
             continue
@@ -103,7 +114,14 @@ def main():
         if sp <= 0:
             continue
         if lp < sp - TOL:
-            under.append((sku, sp, lp, sstock, lstock, upd, tab, rown))
+            # A SKU on the BuyBox tab is priced below the sheet ON
+            # PURPOSE (active Buy Box defense, floor-protected - see
+            # buybox_defense.py). Fixing it would undo the defense,
+            # so it is reported separately and never touched.
+            if sku in defended:
+                under_def.append((sku, sp, lp, sstock, lstock, upd, tab, rown))
+            else:
+                under.append((sku, sp, lp, sstock, lstock, upd, tab, rown))
         elif lp > sp + TOL:
             over.append((sku, sp, lp, sstock, lstock, upd, tab, rown))
         elif lstock != sstock:
@@ -113,6 +131,7 @@ def main():
     for sku, sp, lp, ss, ls, upd, tab, rn in sorted(under, key=lambda x: x[1] - x[2], reverse=True)[:40]:
         log.info("  %s [%s row %d]: sheet %.2f vs LIVE %.2f (stock %d/%d) updated_at=%s",
                  sku, tab, rn, sp, lp, ss, ls, upd)
+    log.info("below sheet but Buy Box-defended (intentional, never fixed): %d", len(under_def))
     log.info("overpriced on OnBuy: %d", len(over))
     for sku, sp, lp, ss, ls, upd, tab, rn in over[:10]:
         log.info("  %s [%s row %d]: sheet %.2f vs LIVE %.2f updated_at=%s", sku, tab, rn, sp, lp, upd)
