@@ -1894,7 +1894,21 @@ def main():
                                              profit_override, fee_override))
         _reprice_basis = (fee_rule is not None or profit_override is not None or fee_override is not None
                           or bool(pricing.legacy_profit_percents(_total_cost)))
-        if _reprice_basis and automation_set and 0 < formula_price < existing_price:
+        if supplier == "Amazon" and formula_price > 0:
+            # Amazon rows always re-derive from the CURRENT fetched cost
+            # - down as well as up (user policy 2026-09-18). The tab is
+            # priced by the automation alone, so when Amazon's price
+            # drops the selling price follows it instead of ratcheting
+            # at max(); the never-lower rule still protects the eBay
+            # tab, where prices are sometimes set by hand. Profit %/
+            # Fee % cell overrides still drive the formula itself, and
+            # a row whose fetch failed never reaches this line.
+            if 0 < formula_price < existing_price - 0.011:
+                price_lowered_by_fee += 1
+                logger.info("Row %d (SKU %s): Amazon price re-derived from current cost: %.2f -> %.2f",
+                            i, sku, existing_price, formula_price)
+            selling_price = formula_price
+        elif _reprice_basis and automation_set and 0 < formula_price < existing_price:
             selling_price = formula_price
             price_lowered_by_fee += 1
             _basis = ("row overrides" if (profit_override is not None or fee_override is not None)
