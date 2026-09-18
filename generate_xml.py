@@ -1540,6 +1540,32 @@ def main():
     if skipped_incomplete:
         logger.info("Skipping %d row(s) with no eBay/Amazon Supplier URL yet (not counted against this run's batch)", skipped_incomplete)
 
+    # A supplier link that belongs on the OTHER tab must not stall this
+    # lane: run.yml (the eBay lane) carries no Keepa key, so an Amazon
+    # link pasted onto the eBay tab aborted the WHOLE eBay sync at the
+    # Keepa client (Makstore, 2026-09-16..18 - 8 runs lost, catalog
+    # unsynced for two days). Misplaced rows are filtered out pre-sort
+    # exactly like URL-less rows (they can make no progress in this
+    # lane) and called out loudly for a human to move them to the
+    # Amazon tab. The Amazon lane keeps its deliberate loud abort when
+    # the key is missing - that alarm is for rows on the RIGHT tab.
+    if not SHEET_TAB:
+        _misplaced = [(idx, row) for idx, row in processable
+                      if supplier_of(row.get("Supplier URL", "")) == "Amazon"]
+        if _misplaced:
+            processable = [(idx, row) for idx, row in processable
+                           if supplier_of(row.get("Supplier URL", "")) != "Amazon"]
+            _rows_txt = ", ".join(str(idx + 2) for idx, _ in _misplaced[:20]) + (
+                ", ..." if len(_misplaced) > 20 else "")
+            logger.warning("%d Amazon link(s) on the eBay tab (sheet row %s) - excluded "
+                           "from this run; move them to the Amazon tab", len(_misplaced), _rows_txt)
+            notify.send_alert_email(
+                "Amazon links on the eBay tab - rows skipped",
+                f"{len(_misplaced)} row(s) on the first (eBay) tab carry Amazon supplier "
+                f"links (sheet rows: {_rows_txt}). The eBay sync runs without a Keepa key, "
+                "so these rows cannot be processed in this lane - move each row to the "
+                "Amazon tab to have it fetched and listed.")
+
     # Manual runs pick ONLY unfilled rows (no Title yet) by default - the
     # Run button exists to onboard newly added products fast, not to
     # re-fetch the whole catalogue (user policy 2026-07-22; a routine
