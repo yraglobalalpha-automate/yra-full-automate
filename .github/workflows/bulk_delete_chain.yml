@@ -1,0 +1,223 @@
+name: Bulk Delete Chain (server-side)
+
+# The whole deletion pipeline on GitHub's runners - plan, four sequential
+# delete jobs, verification - so a closed laptop changes nothing. The run
+# holds the onbuy-api group for its full duration; dispatch it only after
+# pausing the scheduled workflows (a cron firing while this run is still
+# PENDING would bump it off the group's one pending slot). The verify job
+# re-enables the schedules even when a delete job failed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      list_file:
+        description: "Repo path: SKUs to delete (one per line)"
+        required: true
+        default: "cleanup/yra_orphan_delete_2026-09-19.txt"
+      exclude_file:
+        description: "Repo path: SKUs already attempted (skipped)"
+        required: false
+        default: ""
+
+permissions:
+  actions: write
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Compute deletable set (sheet-synced SKUs are pardoned)
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          LIST_FILE: ${{ inputs.list_file }}
+          EXCLUDE_FILE: ${{ inputs.exclude_file }}
+        run: python plan_bulk_delete.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chunks
+          path: chunks/
+
+  delete_1:
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: chunks
+          path: chunks/
+      - name: Delete chunk 1
+        env:
+          DRY_RUN: "0"
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: |
+          if [ -s chunks/chunk_01.txt ]; then
+            export DELETE_SKUS=$(paste -sd, - < chunks/chunk_01.txt)
+            python delete_listings.py
+          else
+            echo "chunk empty - nothing to delete"
+          fi
+
+  delete_2:
+    needs: delete_1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: chunks
+          path: chunks/
+      - name: Delete chunk 2
+        env:
+          DRY_RUN: "0"
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: |
+          if [ -s chunks/chunk_02.txt ]; then
+            export DELETE_SKUS=$(paste -sd, - < chunks/chunk_02.txt)
+            python delete_listings.py
+          else
+            echo "chunk empty - nothing to delete"
+          fi
+
+  delete_3:
+    needs: delete_2
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: chunks
+          path: chunks/
+      - name: Delete chunk 3
+        env:
+          DRY_RUN: "0"
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: |
+          if [ -s chunks/chunk_03.txt ]; then
+            export DELETE_SKUS=$(paste -sd, - < chunks/chunk_03.txt)
+            python delete_listings.py
+          else
+            echo "chunk empty - nothing to delete"
+          fi
+
+  delete_4:
+    needs: delete_3
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: chunks
+          path: chunks/
+      - name: Delete chunk 4
+        env:
+          DRY_RUN: "0"
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: |
+          if [ -s chunks/chunk_04.txt ]; then
+            export DELETE_SKUS=$(paste -sd, - < chunks/chunk_04.txt)
+            python delete_listings.py
+          else
+            echo "chunk empty - nothing to delete"
+          fi
+
+  verify:
+    needs: [plan, delete_4]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: chunks
+          path: chunks/
+      - name: Probe live listings and tally
+        env:
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: |
+          python probe_listings_skus.py > probe.log
+          head -1 probe.log
+          python - <<'PY'
+          live = set()
+          on = False
+          for line in open("probe.log", encoding="utf-8"):
+              line = line.strip()
+              if line == "BEGIN-SKUS": on = True; continue
+              if line == "END-SKUS": on = False; continue
+              if on and line: live.add(line)
+          deletable = [l.strip() for l in open("chunks/deletable.txt", encoding="utf-8") if l.strip()]
+          excluded = [l.strip() for l in open("chunks/excluded.txt", encoding="utf-8") if l.strip()]
+          remain = sorted(set(deletable) & live)
+          print(f"TALLY: deletable {len(deletable)} | STILL LIVE from deletable: {len(remain)}")
+          for s in remain[:30]: print("  still live:", s)
+          print(f"excluded sheet-synced still live (EXPECTED): {len(set(excluded) & live)}")
+          PY
+      - name: Re-enable the scheduled workflows
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for wf in run.yml run_amazon.yml backfill_onbuy_status.yml; do
+            gh workflow enable $wf -R ${{ github.repository }} && echo "enabled $wf" || echo "could not enable $wf"
+          done
