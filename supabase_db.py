@@ -213,3 +213,78 @@ def fetch_full_rows(skus):
     except (ValueError, KeyError, TypeError) as exc:
         logger.error("Fetching full Supabase rows: unexpected response shape: %s", exc)
         return {}
+
+
+def fetch_created_rows():
+    """Every registry row the pipeline ever created: [{sku, price, active}].
+    Paged full-table read filtered in Python - GTV's tracking columns are
+    boolean-typed while the siblings' are text ("TRUE"), so one PostgREST
+    eq-filter cannot serve all five stores; str().upper() serves both."""
+    supabase_url = os.getenv("SUPABASE_URL")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+    if not supabase_url or not service_key:
+        return []
+    endpoint = f"{supabase_url.rstrip('/')}/rest/v1/{TABLE_NAME}"
+    headers = {"apikey": service_key, "Authorization": f"Bearer {service_key}"}
+    sel = _select_param(("SKU", "Selling Price (£)", "OnBuy Product Created", "OnBuy Listing Active"))
+    out, offset, page = [], 0, 1000
+    while True:
+        try:
+            resp = requests.get(endpoint,
+                                headers={**headers, "Range": f"{offset}-{offset + page - 1}"},
+                                params={"select": sel, "order": "SKU.asc"}, timeout=30)
+        except requests.exceptions.RequestException as exc:
+            logger.error("fetch_created_rows failed: %s", exc)
+            return []
+        if resp.status_code not in (200, 206):
+            logger.error("fetch_created_rows failed (%s): %s", resp.status_code, resp.text[:200])
+            return []
+        try:
+            rows = resp.json()
+        except ValueError:
+            return []
+        for r in rows:
+            if str(r.get("OnBuy Product Created") or "").strip().upper() != "TRUE":
+                continue
+            sku = str(r.get("SKU") or "").replace(",", "").strip()
+            if not sku:
+                continue
+            try:
+                price = float(str(r.get("Selling Price (£)") or "").replace(",", "") or 0)
+            except (TypeError, ValueError):
+                price = 0.0
+            out.append({"sku": sku, "price": price,
+                        "active": str(r.get("OnBuy Listing Active") or "").strip().upper() == "TRUE"})
+        if len(rows) < page:
+            break
+        offset += page
+    return out
+
+
+def mark_listing_inactive(skus):
+    """Registry PATCH: OnBuy Listing Active = FALSE for these SKUs. PATCH
+    touches only the named column, so the full-row NOT NULL rule for
+    upserts does not apply; the string 'FALSE' casts cleanly to both the
+    boolean (GTV) and text (siblings) column types."""
+    supabase_url = os.getenv("SUPABASE_URL")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+    if not supabase_url or not service_key or not skus:
+        return False
+    endpoint = f"{supabase_url.rstrip('/')}/rest/v1/{TABLE_NAME}"
+    headers = {"apikey": service_key, "Authorization": f"Bearer {service_key}",
+               "Content-Type": "application/json", "Prefer": "return=minimal"}
+    ok = True
+    for c in range(0, len(skus), 100):
+        chunk = [str(s).replace('"', "").replace(",", "") for s in skus[c:c + 100]]
+        quoted = ",".join(f'"{s}"' for s in chunk)
+        try:
+            resp = requests.patch(endpoint, headers=headers,
+                                  params={"SKU": f"in.({quoted})"},
+                                  json={"OnBuy Listing Active": "FALSE"}, timeout=30)
+            if resp.status_code not in (200, 204):
+                logger.error("mark_listing_inactive (%s): %s", resp.status_code, resp.text[:200])
+                ok = False
+        except requests.exceptions.RequestException as exc:
+            logger.error("mark_listing_inactive failed: %s", exc)
+            ok = False
+    return ok

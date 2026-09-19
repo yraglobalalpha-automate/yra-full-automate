@@ -306,6 +306,25 @@ def import_opc_rows(tabs, onbuy):
     return True
 
 
+def _reconcile_deletions(book, onbuy=None):
+    """Security change #3 (2026-09-19): sheet-deleted products come off
+    OnBuy - stock zeroed on first sight, listing deleted after the grace
+    window (deletion_reconciler.py). Called at EVERY exit of main() so
+    quiet backfill hours still reconcile; a reconciler hiccup never
+    costs the backfill's own work."""
+    try:
+        if onbuy is None:
+            use_sandbox = os.getenv("ONBUY_USE_SANDBOX", "false").strip().lower() == "true"
+            onbuy = OnBuyClient(use_sandbox=use_sandbox)
+            if not onbuy.authenticate():
+                print("delist: OnBuy auth failed - reconciler skipped this run")
+                return
+        import deletion_reconciler
+        deletion_reconciler.run(book, onbuy)
+    except Exception as exc:  # noqa: BLE001 - never break the backfill
+        print(f"deletion reconciler failed (backfill unaffected): {exc}")
+
+
 def main():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
@@ -339,6 +358,7 @@ def main():
     has_imports = IMPORT_OPC and any(_import_candidates(tab["data"]) for tab in tabs)
     if not all_pending and not has_imports:
         print("No rows needing a queue-status check and no OPC-seeded rows - nothing to do.")
+        _reconcile_deletions(book)
         return
 
     use_sandbox = os.getenv("ONBUY_USE_SANDBOX", "false").strip().lower() == "true"
@@ -352,6 +372,7 @@ def main():
 
     if not all_pending:
         print("No rows needing a queue-status check found - done.")
+        _reconcile_deletions(book, onbuy)
         return
 
     print(f"Checking {len(all_pending)} pending SKU(s) against OnBuy's queue history...")
@@ -459,6 +480,8 @@ def main():
     still_pending = set(all_pending) - set(found)
     if still_pending:
         print(f"Still pending (not found in queue history yet): {', '.join(still_pending)}")
+
+    _reconcile_deletions(book, onbuy)
 
 
 if __name__ == "__main__":
