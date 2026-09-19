@@ -172,6 +172,27 @@ def should_push_to_onbuy(sku):
     return True
 
 
+def _supplier_identity(url):
+    """The supplier-side PRODUCT id a link points at: 'amazon:<ASIN>' or
+    'ebay:<item id>' - the SKU registry's cheap same-listing test."""
+    u = str(url or "")
+    if supplier_of(u) == "Amazon":
+        asin = keepa_client.parse_asin(u)
+        return f"amazon:{asin}" if asin else ""
+    m = re.search(r"/itm/(\d+)", u)
+    return f"ebay:{m.group(1)}" if m else ""
+
+
+def _title_similar(a, b):
+    """Token-overlap similarity - the same rule scan_content_mismatch
+    trusts in production for name-vs-title matching."""
+    na = set(re.sub(r"[^a-z0-9]+", " ", str(a or "").lower()).split())
+    nb = set(re.sub(r"[^a-z0-9]+", " ", str(b or "").lower()).split())
+    if not na or not nb:
+        return 0.0
+    return len(na & nb) / min(len(na), len(nb))
+
+
 def supplier_of(url):
     """Which fetcher a Supplier URL belongs to - "eBay", "Amazon" (an
     amazon.* link carrying an ASIN) or "" for anything else."""
@@ -1811,6 +1832,28 @@ def main():
         if not amazon_flag and sku and all_sku_counts.get(sku, 0) > 1:
             amazon_flag = f"Failed: SKU appears on {all_sku_counts[sku]} sheet rows - one product per SKU"
             logger.warning("Row %d (SKU %s): %s", i, sku, amazon_flag)
+
+        # ============ SKU REGISTRY (2026-09-19, user directive) ============
+        # One barcode = one product, FOREVER. The Supabase mirror remembers
+        # every SKU's product (Title + Supplier URL) and survives sheet-row
+        # deletion, so a SKU re-pasted onto a DIFFERENT product freezes here
+        # before anything is priced or pushed. Same-listing relinks (same
+        # ASIN/item id) and same-product relinks (title still similar) pass;
+        # a mirror row without a stored title has nothing to compare against
+        # and fails open. Frozen rows never reach OnBuy and never overwrite
+        # the registry (their Supabase upsert is skipped at export time).
+        if not amazon_flag and sku:
+            _reg = existing_fields.get(sku, {})
+            _reg_title = str(_reg.get("Title") or "").strip()
+            _reg_url = str(_reg.get("Supplier URL") or "").strip()
+            if _reg_title:
+                _cur_id = _supplier_identity(url)
+                if not (_cur_id and _cur_id == _supplier_identity(_reg_url)) \
+                        and title and _title_similar(title, _reg_title) < 0.5:
+                    amazon_flag = (f"Failed: SKU is registered to '{_reg_title[:60]}' - one barcode = "
+                                   "one product; give this product its own new SKU")
+                    logger.warning("Row %d (SKU %s): %s (link now shows '%.60s')",
+                                   i, sku, amazon_flag, title)
         # The categoriser reads text; Amazon's category tree is the best
         # hint it can get, so it rides along with the description here only.
         category_text = description if supplier != "Amazon" else f"{description} {ebay_data.get('category_path') or ''}"
@@ -2402,7 +2445,12 @@ def main():
             "OnBuy Product ID": onbuy_product_id or existing.get("OnBuy Product ID") or "",
             "Last OnBuy Sync": carry_forward(last_onbuy_sync, existing.get("Last OnBuy Sync")),
         }
-        supabase_rows.append(supabase_row)
+        # A frozen row (one-product-per-SKU / registry conflict) must not
+        # overwrite the registry with the conflicting product's content -
+        # the sheet carries its Failed status; the mirror keeps the record
+        # of the product this SKU actually belongs to.
+        if not amazon_flag:
+            supabase_rows.append(supabase_row)
 
     # ================= APPLY ALL SHEET VALUE UPDATES (one call for the whole run) =================
     _rows_shifted_at_flush = False

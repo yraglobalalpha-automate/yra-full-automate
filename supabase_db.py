@@ -113,6 +113,11 @@ TRACKING_COLUMNS = (
     # value the automation wrote under an older basis.
     "Fee %",
     "Profit %",
+    # SKU registry (2026-09-19): the mirror is the permanent record of
+    # which PRODUCT a SKU belongs to - it survives sheet-row deletion,
+    # so the sync can freeze a SKU pasted onto a different product.
+    "Title",
+    "Supplier URL",
 )
 
 
