@@ -34,7 +34,19 @@ def main():
         ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
     book = with_retry(lambda: gspread.authorize(creds).open(SHEET_NAME), what="sheet open", max_attempts=3)
     sheet_skus = set()
-    for tab in book.worksheets():
+    # PRODUCT tabs only (first/eBay + Amazon). System tabs carry a SKU
+    # column too - BuyBox lists every CONTESTED live listing (its
+    # candidates come from the API, not the sheet), so counting all
+    # worksheets pardoned 543 contested ORPHANS on 2026-09-19 - the
+    # exact false-positive class the uniqueness guard hit on 09-17.
+    _tabs = [book.sheet1]
+    try:
+        _amz = book.worksheet("Amazon")
+        if _amz.title != _tabs[0].title:
+            _tabs.append(_amz)
+    except gspread.exceptions.WorksheetNotFound:
+        pass
+    for tab in _tabs:
         headers = [str(x).strip() for x in tab.row_values(1)]
         if "SKU" in headers:
             for v in tab.col_values(headers.index("SKU") + 1)[1:]:
