@@ -63,7 +63,8 @@ def main():
             sku = sku_aliases.to_true(it.get("sku"))
             if sku:
                 listings[sku] = (str(it.get(name_key) or "").strip(),
-                                 str(it.get("created_at") or "")[:16])
+                                 str(it.get("created_at") or "")[:16],
+                                 it.get("price"), it.get("stock"))
         if len(items) < limit:
             break
         offset += limit
@@ -72,7 +73,10 @@ def main():
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
         creds_dict, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
-    sheet = gspread.authorize(creds).open("YRA_Full_Feed_Master").sheet1
+    _book = gspread.authorize(creds).open("YRA_Full_Feed_Master")
+    _tab = (os.getenv("SHEET_TAB") or "").strip()
+    sheet = _book.sheet1 if not _tab else _book.worksheet(_tab)
+    print(f"worksheet: {sheet.title}")
     rows = sheet.get_all_records()
     # Displayed SKU text overrides numericise - leading zeros survive (see
     # the matching overlay in generate_xml.py, 2026-08-27).
@@ -113,7 +117,7 @@ def main():
         if not title:
             no_title += 1
             continue
-        lname, lcreated = listings[sku]
+        lname, lcreated = listings[sku][:2]
         if similar(lname, title) >= 0.5:
             matched += 1
             if sku in protected:
@@ -150,6 +154,36 @@ def main():
         print(f"mismatch row range: {min(rownums)}..{max(rownums)}")
     # Daily guard (2026-08-21): shifts/collisions that are NOT yet protected
     # are new exposure - email the on-call so they get zeroed/protected.
+    # ORPHANS (2026-09-19, wrong order on sheet-deleted SKU 282005682294):
+    # live listings whose SKU is on NO product tab any more. A row
+    # deleted from the sheet leaves its listing live at a frozen price
+    # forever, and nothing else looks at it (the price audit joins by
+    # sheet SKU). Report-only: an orphan may also be a legacy hand-made
+    # listing the team wants kept - seed a row + OPC to adopt it, or
+    # delete it via delete_listings. Both product tabs count as "on the
+    # sheet" no matter which tab this scan ran against.
+    all_sheet = set()
+    _ptabs = [_book.sheet1]
+    try:
+        _amz = _book.worksheet("Amazon")
+        if _amz.title != _ptabs[0].title:
+            _ptabs.append(_amz)
+    except gspread.exceptions.WorksheetNotFound:
+        pass
+    for _ws in _ptabs:
+        _wh = [str(h).strip() for h in _ws.row_values(1)]
+        if "SKU" not in _wh:
+            continue
+        for _v in _ws.col_values(_wh.index("SKU") + 1)[1:]:
+            _v = str(_v).replace(",", "").strip()
+            if _v:
+                all_sheet.add(_v)
+    orphans = sorted(k for k in listings if k not in all_sheet)
+    print(f"ORPHANS (live on OnBuy, on no product tab): {len(orphans)}")
+    for _sku in orphans:
+        _o = listings[_sku]
+        print(f"ORPHAN|{_sku}|price={_o[2]}|stock={_o[3]}|created={_o[1]}|{_o[0][:60]}")
+
     fresh = [m for m in mismatches if m[1] not in protected]
     if fresh and os.getenv("ALERT_EMAIL_TO"):
         try:

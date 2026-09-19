@@ -75,7 +75,10 @@ def main():
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
         creds_dict, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
-    sheet = gspread.authorize(creds).open("YRA_Full_Feed_Master").sheet1
+    _book = gspread.authorize(creds).open("YRA_Full_Feed_Master")
+    _tab = (os.getenv("SHEET_TAB") or "").strip()
+    sheet = _book.sheet1 if not _tab else _book.worksheet(_tab)
+    print(f"worksheet: {sheet.title}")
     rows = sheet.get_all_records()
     # Displayed SKU text overrides numericise - leading zeros survive (see
     # generate_xml.py's matching overlay, 2026-08-27).
