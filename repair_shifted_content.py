@@ -13,6 +13,7 @@ import csv
 import json
 import logging
 import os
+import time
 import re
 
 import gspread
@@ -53,11 +54,19 @@ def main():
     offset, limit = 0, 100
     while True:
         def _page(off=offset):
-            r = onbuy._send("GET", f"{BASE_URL}/listings", what="listings page",
-                            params={"site_id": onbuy.site_id, "limit": limit, "offset": off},
-                            timeout=60)
-            r.raise_for_status()
-            return r
+            # OnBuy GET quota / transient server trouble must not kill a
+            # sweep mid-way (nightly 2026-09-20: Arden 429 after three
+            # full sweeps in one hour, GTV a stray 500) - wait it out.
+            for _try in range(6):
+                r = onbuy._send("GET", f"{BASE_URL}/listings", what="listings page",
+                                params={"site_id": onbuy.site_id, "limit": limit, "offset": off},
+                                timeout=60)
+                if r.status_code in (429, 500, 502, 503) and _try < 5:
+                    print(f"listings page: HTTP {r.status_code} - waiting 120s before retrying")
+                    time.sleep(120)
+                    continue
+                r.raise_for_status()
+                return r
         body = with_retry(_page, what=f"listings page {offset}", max_attempts=3).json()
         items = body.get("results") if isinstance(body, dict) else body
         if not isinstance(items, list) or not items:

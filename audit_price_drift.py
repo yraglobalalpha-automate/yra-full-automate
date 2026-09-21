@@ -8,6 +8,7 @@ without it this is a pure report. Product tabs only (first + Amazon).
 """
 import logging
 import os
+import time
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -70,10 +71,17 @@ def live_listings(onbuy):
     off = 0
     while True:
         def _pg(o=off):
-            r = onbuy._send("GET", f"{BASE_URL}/listings", what=f"listings page {o}",
-                            params={"site_id": onbuy.site_id, "limit": 100, "offset": o}, timeout=60)
-            r.raise_for_status()
-            return r
+            # Wait out OnBuy GET-quota 429s / transient 5xx instead of
+            # dying mid-sweep (Arden nightly, 2026-09-20).
+            for _try in range(6):
+                r = onbuy._send("GET", f"{BASE_URL}/listings", what=f"listings page {o}",
+                                params={"site_id": onbuy.site_id, "limit": 100, "offset": o}, timeout=60)
+                if r.status_code in (429, 500, 502, 503) and _try < 5:
+                    print(f"listings page: HTTP {r.status_code} - waiting 120s before retrying")
+                    time.sleep(120)
+                    continue
+                r.raise_for_status()
+                return r
         body = with_retry(_pg, what=f"listings page {off}", max_attempts=3).json()
         items = body.get("results") if isinstance(body, dict) else body
         if not isinstance(items, list) or not items:
