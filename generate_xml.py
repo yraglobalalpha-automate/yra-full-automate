@@ -1311,6 +1311,7 @@ def main():
     onbuy_needs_category = 0  # refusals awaiting a Category cell - a worklist, not failures (2026-08-06)
     onbuy_halt_reason = None  # set when pushing must stop for the rest of the run (rate limit / dead token)
     onbuy_pushes_this_run = 0
+    oos_missed_push = []  # (sku, price): stock-0 rows that missed a push slot this run
     rows_to_delete = []  # Sheet row numbers to remove entirely - see the
     # "supplied brand is owned by another seller" check below. Applied after
     # every other Sheet write this run, in descending row order, so deleting
@@ -2049,6 +2050,19 @@ def main():
         onbuy_product_id = None
         last_onbuy_sync = None
 
+        # Out of stock must never wait for a push slot (2026-09-21 mass-
+        # OOS flush: hundreds of rows went stock-0 in one run and their
+        # live zeroing trailed into the NEXT run's OOS pass - a 2-4h
+        # buyable window on dead sources). A created row that is out of
+        # stock but loses the gate below gets zeroed in one uncapped
+        # batch after the loop.
+        if (sku and onbuy_ready and onbuy_halt_reason is None and not amazon_flag
+                and stock == 0 and selling_price > 0
+                and not (should_push_to_onbuy(sku) and onbuy_pushes_this_run < ONBUY_MAX_PUSHES_PER_RUN)):
+            _status_now = str(existing_fields.get(sku, {}).get("Sync Status") or row.get("Sync Status") or "")
+            if _status_now.startswith(("Synced", "Pending Approval", "Awaiting OnBuy go-live")):
+                oos_missed_push.append((sku, selling_price))
+
         if (sku and onbuy_ready and onbuy_halt_reason is None and not amazon_flag
                 and should_push_to_onbuy(sku) and onbuy_pushes_this_run < ONBUY_MAX_PUSHES_PER_RUN):
             existing = existing_fields.get(sku, {})
@@ -2502,6 +2516,24 @@ def main():
         # of the product this SKU actually belongs to.
         if not amazon_flag:
             supabase_rows.append(supabase_row)
+
+    # ============ UNCAPPED OOS ZERO BATCH (2026-09-21) ============
+    # Rows that went out of stock this run but missed a push slot: zero
+    # their live stock NOW, outside the cap, exactly like the start-of-
+    # run OOS pass (which remains the catch-all if this batch bounces).
+    if oos_missed_push and ONBUY_API_PUSH_ENABLED and onbuy_ready and onbuy_halt_reason is None:
+        logger.info("OOS batch: zeroing %d row(s) that went out of stock beyond this run's push slots",
+                    len(oos_missed_push))
+        for _c in range(0, len(oos_missed_push), 500):
+            _chunk = oos_missed_push[_c:_c + 500]
+            try:
+                _results = onbuy.update_listings_by_sku_batch([(s, p, 0) for s, p in _chunk])
+                _errs = {str((it or {}).get("sku") or "").strip(): str((it or {}).get("error") or "").strip()
+                         for it in _results or []}
+                _ok = sum(1 for s, _p in _chunk if not _errs.get(s, "missing"))
+                logger.info("OOS batch: %d zeroed, %d bounced", _ok, len(_chunk) - _ok)
+            except Exception as exc:  # noqa: BLE001 - next run's OOS pass covers it
+                logger.error("OOS batch failed (next run's OOS pass covers it): %s", exc)
 
     # ================= APPLY ALL SHEET VALUE UPDATES (one call for the whole run) =================
     _rows_shifted_at_flush = False
