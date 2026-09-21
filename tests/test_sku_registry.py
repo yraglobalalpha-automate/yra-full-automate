@@ -45,3 +45,35 @@ def test_registry_freeze_rule_in_source():
     assert "SKU is registered to" in SRC
     assert "if not amazon_flag:\n            supabase_rows.append" in repr(SRC) or \
            "if not amazon_flag:" in SRC
+
+
+def _identity_ns():
+    import types
+    tree = ast.parse(SRC)
+    keep = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_supplier_identity"]
+    mod = ast.Module(body=keep, type_ignores=[])
+    kc = types.SimpleNamespace(parse_asin=lambda u: (re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})", u or "").group(1)
+                                                    if re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})", u or "") else ""))
+    ns = {"re": re, "keepa_client": kc,
+          "supplier_of": lambda u: "Amazon" if "amazon." in str(u) else "eBay"}
+    exec(compile(mod, "generate_xml_extract", "exec"), ns)
+    return ns
+
+
+def test_supplier_identity_amazon_and_ebay():
+    f = _identity_ns()["_supplier_identity"]
+    assert f("https://www.amazon.co.uk/dp/B0GHLYTLQC") == "amazon:B0GHLYTLQC"
+    assert f("https://www.ebay.co.uk/itm/358403598935") == "ebay:358403598935"
+    assert f("") == ""
+
+
+def test_supplier_identity_ebay_variants_distinct():
+    f = _identity_ns()["_supplier_identity"]
+    a = f("https://www.ebay.co.uk/itm/358403598935?var=111")
+    b = f("https://www.ebay.co.uk/itm/358403598935?var=222")
+    assert a != b and a.startswith("ebay:358403598935:")
+
+
+def test_link_uniqueness_guard_in_source():
+    assert "supplier link already used on row" in SRC
+    assert "all_link_counts" in SRC and "all_link_first" in SRC

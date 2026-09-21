@@ -180,7 +180,12 @@ def _supplier_identity(url):
         asin = keepa_client.parse_asin(u)
         return f"amazon:{asin}" if asin else ""
     m = re.search(r"/itm/(\d+)", u)
-    return f"ebay:{m.group(1)}" if m else ""
+    if not m:
+        return ""
+    # A multi-variation eBay listing is ONE /itm/ id with a ?var= per
+    # variant - two rows on different variants are different products.
+    v = re.search(r"[?&]var(?:iationId)?=(\d+)", u)
+    return f"ebay:{m.group(1)}" + (f":{v.group(1)}" if v else "")
 
 
 def _title_similar(a, b):
@@ -1697,6 +1702,7 @@ def main():
     # check_winning probe adopts it via plain update instead of creating a
     # duplicate. Fails OPEN: a read error only logs and skips the check.
     all_sku_counts = {}
+    all_link_counts, all_link_first = {}, {}
     try:
         # PRODUCT tabs only (the first/eBay tab and the Amazon tab). System
         # tabs carry a SKU column too - BuyBox mirrors every tracked
@@ -1712,15 +1718,25 @@ def main():
             pass
         for _ws in _product_tabs:
             _wh = [str(h).strip() for h in _ws.row_values(1)]
-            if "SKU" not in _wh:
-                continue
-            for _v in _ws.col_values(_wh.index("SKU") + 1)[1:]:
-                _v = str(_v).replace(",", "").strip()
-                if _v:
-                    all_sku_counts[_v] = all_sku_counts.get(_v, 0) + 1
+            if "SKU" in _wh:
+                for _v in _ws.col_values(_wh.index("SKU") + 1)[1:]:
+                    _v = str(_v).replace(",", "").strip()
+                    if _v:
+                        all_sku_counts[_v] = all_sku_counts.get(_v, 0) + 1
+            # One supplier product = one listing (user 2026-09-21): map
+            # every parseable link identity to its FIRST row so a later
+            # row re-using the link freezes instead of listing the same
+            # source product a second time.
+            if "Supplier URL" in _wh:
+                for _ri, _v in enumerate(_ws.col_values(_wh.index("Supplier URL") + 1)[1:], start=2):
+                    _id = _supplier_identity(_v)
+                    if _id:
+                        all_link_counts[_id] = all_link_counts.get(_id, 0) + 1
+                        all_link_first.setdefault(_id, (_ws.title, _ri))
     except Exception as exc:  # noqa: BLE001 - advisory guard, never fatal
         logger.warning("SKU guard: sheet-wide count failed (%s) - duplicate check off this run", str(exc)[:120])
         all_sku_counts = {}
+        all_link_counts, all_link_first = {}, {}
     amazon_asins = sorted({keepa_client.parse_asin(row.get("Supplier URL"))
                            for _, row in batch if supplier_of(row.get("Supplier URL")) == "Amazon"})
     if amazon_asins:
@@ -1854,6 +1870,18 @@ def main():
                                    "one product; give this product its own new SKU")
                     logger.warning("Row %d (SKU %s): %s (link now shows '%.60s')",
                                    i, sku, amazon_flag, title)
+
+        # One supplier product = one listing (user 2026-09-21): a link
+        # already used on an earlier row must not be fetched and listed
+        # again as a second product of the same source.
+        if not amazon_flag and url:
+            _lid = _supplier_identity(url)
+            if _lid and all_link_counts.get(_lid, 0) > 1:
+                _ft, _fr = all_link_first.get(_lid, ("", 0))
+                if (_ft, _fr) != (sheet.title, i):
+                    amazon_flag = (f"Failed: supplier link already used on row {_fr} ({_ft}) "
+                                   "- one listing per supplier product")
+                    logger.warning("Row %d (SKU %s): %s", i, sku, amazon_flag)
         # The categoriser reads text; Amazon's category tree is the best
         # hint it can get, so it rides along with the description here only.
         category_text = description if supplier != "Amazon" else f"{description} {ebay_data.get('category_path') or ''}"
