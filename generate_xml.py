@@ -6,7 +6,7 @@ import re
 import sys
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import gspread
@@ -750,6 +750,20 @@ def get_ebay_data(url, token):
     if data is None:
         logger.info("REMOVED LISTING: %s", item_id)
         return False, empty_ebay_response()
+
+    # An itemEndDate in the past = the listing ENDED. eBay's own
+    # community confirms getItemByLegacyId can still answer with cached
+    # item data for ended listings (and estimatedAvailabilities can be
+    # null at random) - the 2026-09-21 oversell class. Ended = nothing
+    # to source from, whatever else the answer carries.
+    _end = str(data.get("itemEndDate") or "").strip()
+    if _end:
+        try:
+            if datetime.fromisoformat(_end.replace("Z", "+00:00")) <= datetime.now(timezone.utc):
+                logger.info("LISTING ENDED %s: %s", _end[:10], item_id)
+                return False, empty_ebay_response()
+        except ValueError:
+            pass
 
     price_data = data.get("price", {}) or {}
     price = float(price_data.get("value", 0) or 0)
