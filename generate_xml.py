@@ -759,6 +759,15 @@ def get_ebay_data(url, token):
 
     estimated = data.get("estimatedAvailabilities", [])
     stock = 5
+    if not estimated:
+        # No availability block at all: eBay stopped vouching that the
+        # item is buyable. The old fall-through default of "available,
+        # stock 5" put two orders on a sold-out source (Makstore SKU
+        # 667179353513, 2026-09-21). Overselling is the costlier
+        # mistake, so absence = out of stock; price and content stay,
+        # and the row self-heals the moment the block returns.
+        logger.info("NO AVAILABILITY BLOCK (treated as out of stock): %s", item_id)
+        return False, empty_ebay_response()
     if estimated:
         est = estimated[0]
         status = est.get("estimatedAvailabilityStatus", "")
