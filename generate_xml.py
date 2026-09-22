@@ -62,6 +62,12 @@ RUNS_PER_DAY = int(os.getenv("RUNS_PER_DAY") or "8")
 # instead of the budget-derived one.
 _MAX_PRODUCTS_PER_RUN_OVERRIDE = os.getenv("MAX_PRODUCTS_PER_RUN")
 
+# Risk-weighted rotation (2026-09-22): rows with 1..MAX units left are
+# the oversell-prone ones - they hold SHARE of every batch's slots on
+# their own oldest-first lane (see PRODUCT ORDER).
+LOW_STOCK_PRIORITY_MAX = int(os.getenv("LOW_STOCK_PRIORITY_MAX") or "5")
+LOW_STOCK_BATCH_SHARE = float(os.getenv("LOW_STOCK_BATCH_SHARE") or "0.4")
+
 # Which worksheet to run: unset = the first tab (eBay rows, the original
 # pipeline); "Amazon" = the Amazon tab - same header row and downstream
 # steps, fetched through Keepa (keepa_client.py, ported from GTV
@@ -1636,7 +1642,33 @@ def main():
     if FULL_REFRESH:
         sorted_data = processable
     else:
-        sorted_data = sorted(processable, key=lambda x: parse_time(x[1].get("Last Checked Time", "")))
+        # Risk-weighted rotation (2026-09-22, second oversold order):
+        # oversells happen on listings with only a few units left - the
+        # source sells out and plain oldest-first may not look again for
+        # 1-2 days on catalogs bigger than the eBay call budget (5,136
+        # GTV rows vs 4,500 calls/day when this shipped; SKU
+        # 653709952448 was 43h stale when its order landed). Low-stock
+        # rows get a reserved share of every batch on their own oldest-
+        # first lane, cutting their re-check cycle to hours; the rest
+        # keep rotating oldest-first behind them.
+        def _checked_key(x):
+            return parse_time(x[1].get("Last Checked Time", ""))
+
+        def _sheet_stock(row):
+            try:
+                return int(float(str(row.get("Stock") or "").replace(",", "") or -1))
+            except (TypeError, ValueError):
+                return -1
+
+        _low = sorted((p for p in processable
+                       if 1 <= _sheet_stock(p[1]) <= LOW_STOCK_PRIORITY_MAX), key=_checked_key)
+        _low_set = {id(p) for p in _low}
+        _rest = sorted((p for p in processable if id(p) not in _low_set), key=_checked_key)
+        _share = max(1, int(MAX_PRODUCTS_PER_RUN * LOW_STOCK_BATCH_SHARE)) if _low else 0
+        if _low:
+            logger.info("Rotation: %d low-stock row(s) (1..%d units) hold %d of %d batch slots",
+                        len(_low), LOW_STOCK_PRIORITY_MAX, min(_share, len(_low)), MAX_PRODUCTS_PER_RUN)
+        sorted_data = _low[:_share] + sorted(_low[_share:] + _rest, key=_checked_key)
 
     # While testing the OnBuy API push against a specific SKU allowlist, move
     # those SKUs to the front of the queue - otherwise a manual test run can
