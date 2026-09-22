@@ -2496,7 +2496,11 @@ def main():
         all_sheet_updates.extend(row_updates)
         updated_count += 1
         logger.info("Processed row %d", i)
-        highlight_requests.append(row_highlight_request(sheet.id, i, num_cols, is_active))
+        # Red = needs a human: out of stock OR any Failed/guard-frozen
+        # status (user 2026-09-22: frozen rows were invisible before -
+        # only stock-0 rows went red).
+        _row_ok = is_active and not str(sync_status or "").startswith("Failed")
+        highlight_requests.append(row_highlight_request(sheet.id, i, num_cols, _row_ok))
         time.sleep(0.2)  # light pacing on eBay fetches; OnBuy pushes are paced separately below
 
         # ================= SUPABASE EXPORT ROW (upserted once after the loop) =================

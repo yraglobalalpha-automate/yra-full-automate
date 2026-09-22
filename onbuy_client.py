@@ -122,6 +122,24 @@ class OnBuyClient:
             resp = requests.request(method, url, headers=self._headers(), **kwargs)
         return resp
 
+    @staticmethod
+    def _fit_product_name(title, limit=150):
+        """OnBuy counts the ENCODED name - '&' as '&amp;' and multi-byte
+        characters as their UTF-8 bytes - so a plain [:150] slice still
+        bounced 54 titles with 'exceeds the 150 character limit'
+        (2026-09-22). Trim at word boundaries until the encoded form
+        fits; the Sheet keeps the full title."""
+        t = " ".join(str(title or "").split())
+
+        def _enc_len(s):
+            return len(s.replace("&", "&amp;").encode("utf-8"))
+
+        while t and _enc_len(t) > limit:
+            cut = t[:-1]
+            sp = cut.rfind(" ")
+            t = (cut[:sp] if sp > 40 else cut).rstrip(" ,;-.")
+        return t
+
     def create_product(self, *, sku, ean, title, description, brand, category_id, price, main_image, additional_images, stock=0):
         payload = {
             "site_id": self.site_id,
@@ -131,7 +149,7 @@ class OnBuyClient:
             "category_id": category_id,
             "product_codes": [ean] if ean else [],
             "rrp": str(price),
-            "product_name": title[:150],
+            "product_name": self._fit_product_name(title),
             "brand_name": brand or "Unbranded",
             # OnBuy nulls an empty-string description server-side and then
             # rejects the whole create with 400 "description must be a
