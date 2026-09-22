@@ -52,7 +52,9 @@ RUN_CATEGORY_MAPPING = True
 # comfortably under eBay's rate limit (commonly ~5,000/day on the default
 # Browse API tier - check your exact allowance in the eBay Developer Portal
 # and adjust this if yours differs).
-EBAY_DAILY_CALL_BUDGET = int(os.getenv("EBAY_DAILY_CALL_BUDGET") or "4000")
+# 4,800 of eBay's 5,000/day Browse allowance (user 2026-09-22: 200
+# headroom for probes/retries) - repo variable overrides this default.
+EBAY_DAILY_CALL_BUDGET = int(os.getenv("EBAY_DAILY_CALL_BUDGET") or "4800")
 
 # How many times this workflow runs per day - keep in sync with the cron
 # schedule in .github/workflows/run.yml (currently every 3 hours = 8/day).
@@ -66,7 +68,10 @@ _MAX_PRODUCTS_PER_RUN_OVERRIDE = os.getenv("MAX_PRODUCTS_PER_RUN")
 # the oversell-prone ones - they hold SHARE of every batch's slots on
 # their own oldest-first lane (see PRODUCT ORDER).
 LOW_STOCK_PRIORITY_MAX = int(os.getenv("LOW_STOCK_PRIORITY_MAX") or "5")
-LOW_STOCK_BATCH_SHARE = float(os.getenv("LOW_STOCK_BATCH_SHARE") or "0.4")
+# 70% of every batch (user 2026-09-22: the majority of the budget goes
+# to 1..5-stock rows so ALL of them re-check within hours; unused
+# priority slots flow to the rest, which rotates on what remains).
+LOW_STOCK_BATCH_SHARE = float(os.getenv("LOW_STOCK_BATCH_SHARE") or "0.7")
 
 # Which worksheet to run: unset = the first tab (eBay rows, the original
 # pipeline); "Amazon" = the Amazon tab - same header row and downstream
