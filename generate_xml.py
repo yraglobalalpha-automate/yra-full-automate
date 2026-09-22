@@ -72,6 +72,10 @@ LOW_STOCK_PRIORITY_MAX = int(os.getenv("LOW_STOCK_PRIORITY_MAX") or "5")
 # to 1..5-stock rows so ALL of them re-check within hours; unused
 # priority slots flow to the rest, which rotates on what remains).
 LOW_STOCK_BATCH_SHARE = float(os.getenv("LOW_STOCK_BATCH_SHARE") or "0.7")
+# How often each low-stock row should re-check per day (default 4 =
+# every ~6h); the lane takes only the slots that needs, up to the
+# share cap, so the general backlog keeps the rest of the budget.
+LOW_STOCK_CYCLES_PER_DAY = int(os.getenv("LOW_STOCK_CYCLES_PER_DAY") or "4")
 
 # Which worksheet to run: unset = the first tab (eBay rows, the original
 # pipeline); "Amazon" = the Amazon tab - same header row and downstream
@@ -1669,7 +1673,16 @@ def main():
                        if 1 <= _sheet_stock(p[1]) <= LOW_STOCK_PRIORITY_MAX), key=_checked_key)
         _low_set = {id(p) for p in _low}
         _rest = sorted((p for p in processable if id(p) not in _low_set), key=_checked_key)
-        _share = max(1, int(MAX_PRODUCTS_PER_RUN * LOW_STOCK_BATCH_SHARE)) if _low else 0
+        # Size the low-stock lane by NEED, capped at the configured
+        # share: enough slots for every low-stock row to re-check
+        # LOW_STOCK_CYCLES_PER_DAY times a day. Burning the full 70%
+        # on a small low set re-checked the same rows every 2h while
+        # the general backlog - where the ended-listing class hides -
+        # starved (YRA 2026-09-22, SKU 630491351925, source ended
+        # 31 Aug, order landed before its first post-fix re-check).
+        _cap = max(1, int(MAX_PRODUCTS_PER_RUN * LOW_STOCK_BATCH_SHARE))
+        _needed = -(-len(_low) * LOW_STOCK_CYCLES_PER_DAY // max(1, RUNS_PER_DAY))
+        _share = min(_cap, max(1, _needed)) if _low else 0
         if _low:
             logger.info("Rotation: %d low-stock row(s) (1..%d units) hold %d of %d batch slots",
                         len(_low), LOW_STOCK_PRIORITY_MAX, min(_share, len(_low)), MAX_PRODUCTS_PER_RUN)
