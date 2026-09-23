@@ -1,0 +1,35 @@
+name: eBay Limit Probe (read-only, daily)
+
+# Watches this keyset's Buy Browse daily call limit via the Developer
+# Analytics API. Emails the moment it differs from EBAY_LIMIT_BASELINE
+# (Growth Check approval watch, filed 2026-09-23).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 6 * * *"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Probe rate limits
+        env:
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          EBAY_LIMIT_BASELINE: ${{ vars.EBAY_LIMIT_BASELINE }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          ALERT_EMAIL_FROM: ${{ vars.ALERT_EMAIL_FROM }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+        run: python ebay_limit_probe.py
