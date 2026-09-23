@@ -84,6 +84,13 @@ def live_listings(onbuy):
                 return r
         body = with_retry(_pg, what=f"listings page {off}", max_attempts=3).json()
         items = body.get("results") if isinstance(body, dict) else body
+        if isinstance(items, list) and 0 <= len(items) < 100:
+            # Short/empty page = possible transient glitch, not the end
+            # (Makstore truncated sweep, 2026-09-23) - re-fetch once.
+            _b2 = with_retry(_pg, what=f"listings page {off} (end confirm)", max_attempts=3).json()
+            _i2 = _b2.get("results") if isinstance(_b2, dict) else _b2
+            if isinstance(_i2, list) and len(_i2) > len(items):
+                items = _i2
         if not isinstance(items, list) or not items:
             break
         for it in items:

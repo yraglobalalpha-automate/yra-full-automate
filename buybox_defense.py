@@ -99,12 +99,29 @@ def page_listings(onbuy):
     offset, limit = 0, 100
     while True:
         def _page(off=offset):
-            r = onbuy._send("GET", f"{BASE_URL}/listings", what="listings page",
-                            params={"site_id": onbuy.site_id, "limit": limit, "offset": off}, timeout=60)
-            r.raise_for_status()
-            return r
+            # Wait out OnBuy GET-quota 429s / transient 5xx instead of
+            # dying mid-sweep (same hardening as the content tools).
+            for _try in range(6):
+                r = onbuy._send("GET", f"{BASE_URL}/listings", what="listings page",
+                                params={"site_id": onbuy.site_id, "limit": limit, "offset": off}, timeout=60)
+                if r.status_code in (429, 500, 502, 503) and _try < 5:
+                    print(f"listings page: HTTP {r.status_code} - waiting 120s before retrying")
+                    time.sleep(120)
+                    continue
+                r.raise_for_status()
+                return r
         body = with_retry(_page, what=f"listings page {offset}", max_attempts=3).json()
         items = body.get("results") if isinstance(body, dict) else body
+        if isinstance(items, list) and 0 <= len(items) < limit:
+            # A short (or empty) page can be a transient OnBuy glitch, not
+            # the end of the list: one truncated sweep undercounted
+            # Makstore's live listings 3,499 vs 8,853 (2026-09-23) and
+            # briefly looked like a mass deletion. Re-fetch once and take
+            # the longer answer; a real final page repeats itself.
+            _b2 = with_retry(_page, what=f"listings page {offset} (end confirm)", max_attempts=3).json()
+            _i2 = _b2.get("results") if isinstance(_b2, dict) else _b2
+            if isinstance(_i2, list) and len(_i2) > len(items):
+                items = _i2
         if not isinstance(items, list) or not items:
             break
         for it in items:

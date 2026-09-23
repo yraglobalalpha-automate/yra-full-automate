@@ -54,6 +54,16 @@ def main():
                 return r
         body = with_retry(_page, what=f"listings page {offset}", max_attempts=3).json()
         items = body.get("results") if isinstance(body, dict) else body
+        if isinstance(items, list) and 0 <= len(items) < limit:
+            # A short (or empty) page can be a transient OnBuy glitch, not
+            # the end of the list: one truncated sweep undercounted
+            # Makstore's live listings 3,499 vs 8,853 (2026-09-23) and
+            # briefly looked like a mass deletion. Re-fetch once and take
+            # the longer answer; a real final page repeats itself.
+            _b2 = with_retry(_page, what=f"listings page {offset} (end confirm)", max_attempts=3).json()
+            _i2 = _b2.get("results") if isinstance(_b2, dict) else _b2
+            if isinstance(_i2, list) and len(_i2) > len(items):
+                items = _i2
         if not isinstance(items, list) or not items:
             break
         if offset == 0:
