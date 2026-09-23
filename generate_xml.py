@@ -1023,7 +1023,25 @@ def main():
     if _MAX_PRODUCTS_PER_RUN_OVERRIDE:
         MAX_PRODUCTS_PER_RUN = max(1, int(_MAX_PRODUCTS_PER_RUN_OVERRIDE))
     else:
+        # ADAPTIVE (2026-09-23): GitHub delivers only ~5 of the 12
+        # scheduled runs on busy days (observed 4.5-5h gaps), so a
+        # budget/RUNS_PER_DAY batch spent under half the eBay budget
+        # and stretched every re-check cycle. The batch now covers the
+        # REAL elapsed time since the previous run - measured from the
+        # newest Last Checked Time on the sheet, no extra state - so
+        # the day's spend tracks the budget whatever the cadence.
         MAX_PRODUCTS_PER_RUN = max(1, EBAY_DAILY_CALL_BUDGET // RUNS_PER_DAY)
+        try:
+            _newest = max((parse_time(r.get("Last Checked Time", "")) for r in data),
+                          default=None)
+            if _newest is not None:
+                _elapsed_h = (datetime.now(PK_TZ) - _newest).total_seconds() / 3600.0
+                if 0 < _elapsed_h <= 24:
+                    _adaptive = int(EBAY_DAILY_CALL_BUDGET * _elapsed_h / 24.0)
+                    MAX_PRODUCTS_PER_RUN = min(max(MAX_PRODUCTS_PER_RUN, _adaptive),
+                                               EBAY_DAILY_CALL_BUDGET // 4)
+        except Exception as exc:  # noqa: BLE001 - sizing must never kill a run
+            logger.warning("adaptive batch sizing failed (%s) - using the fixed size", exc)
 
     cycle_runs = -(-len(data) // MAX_PRODUCTS_PER_RUN) if data else 0  # ceil division
     cycle_days = cycle_runs / RUNS_PER_DAY if RUNS_PER_DAY else 0
@@ -1669,8 +1687,13 @@ def main():
             except (TypeError, ValueError):
                 return -1
 
+        # Inside the priority lane, 1-unit rows first (one sale kills
+        # them), then 2..MAX, oldest-first within each stock level -
+        # the lane holds thousands of rows (YRA 5,302 on 2026-09-23),
+        # so ordering by risk matters as much as membership.
         _low = sorted((p for p in processable
-                       if 1 <= _sheet_stock(p[1]) <= LOW_STOCK_PRIORITY_MAX), key=_checked_key)
+                       if 1 <= _sheet_stock(p[1]) <= LOW_STOCK_PRIORITY_MAX),
+                      key=lambda p: (_sheet_stock(p[1]), _checked_key(p)))
         _low_set = {id(p) for p in _low}
         _rest = sorted((p for p in processable if id(p) not in _low_set), key=_checked_key)
         # Size the low-stock lane by NEED, capped at the configured
