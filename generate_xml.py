@@ -1035,7 +1035,9 @@ def main():
             _newest = max((parse_time(r.get("Last Checked Time", "")) for r in data),
                           default=None)
             if _newest is not None:
-                _elapsed_h = (datetime.now(PK_TZ) - _newest).total_seconds() / 3600.0
+                # Last Checked Time cells are naive PK wall clock - compare naive to naive
+                _now_pk = datetime.now(PK_TZ).replace(tzinfo=None)
+                _elapsed_h = (_now_pk - _newest).total_seconds() / 3600.0
                 if 0 < _elapsed_h <= 24:
                     _adaptive = int(EBAY_DAILY_CALL_BUDGET * _elapsed_h / 24.0)
                     MAX_PRODUCTS_PER_RUN = min(max(MAX_PRODUCTS_PER_RUN, _adaptive),
