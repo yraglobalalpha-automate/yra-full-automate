@@ -108,7 +108,8 @@ def with_retry(fn, *args, what="request", max_attempts=4, base_delay=2.0, max_de
             delay = min(base_delay * (2 ** (attempt - 1)), max_delay) + random.uniform(0, 1)
             logger.warning("%s: transient error (%s), retrying in %.1fs (attempt %d/%d)", what, exc, delay, attempt, max_attempts)
             time.sleep(delay)
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError) as exc:
             last_exc = exc
             if attempt >= max_attempts:
                 break

@@ -15,6 +15,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 
 from onbuy_client import BASE_URL, OnBuyClient
+import listings_cache
 from retry_utils import with_retry
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -68,8 +69,13 @@ def sheet_rows():
 
 def live_listings(onbuy):
     out = {}
+    # One shared sweep per nightly job (see listings_cache.py).
+    raw_items = listings_cache.load()
+    fetched = raw_items is None
+    if fetched:
+        raw_items = []
     off = 0
-    while True:
+    while fetched:
         def _pg(o=off):
             # Wait out OnBuy GET-quota 429s / transient 5xx instead of
             # dying mid-sweep (Arden nightly, 2026-09-20).
@@ -93,23 +99,26 @@ def live_listings(onbuy):
                 items = _i2
         if not isinstance(items, list) or not items:
             break
-        for it in items:
-            it = it or {}
-            sku = str(it.get("sku") or "").strip()
-            if not sku:
-                continue
-            try:
-                price = float(it.get("price") or 0)
-            except (TypeError, ValueError):
-                price = 0.0
-            try:
-                stock = int(it.get("stock") or 0)
-            except (TypeError, ValueError):
-                stock = 0
-            out[sku] = (price, stock, str(it.get("updated_at") or ""))
+        raw_items.extend(items)
         if len(items) < 100:
             break
         off += 100
+    if fetched:
+        listings_cache.save(raw_items)
+    for it in raw_items:
+        it = it or {}
+        sku = str(it.get("sku") or "").strip()
+        if not sku:
+            continue
+        try:
+            price = float(it.get("price") or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+        try:
+            stock = int(it.get("stock") or 0)
+        except (TypeError, ValueError):
+            stock = 0
+        out[sku] = (price, stock, str(it.get("updated_at") or ""))
     return out
 
 

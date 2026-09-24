@@ -31,6 +31,7 @@ jobs:
       - name: Scan first tab (content + orphans, report)
         if: ${{ !cancelled() }}
         env:
+          LISTINGS_CACHE: "listings_cache.json"
           SHEET_TAB: ""
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
@@ -52,6 +53,7 @@ jobs:
       - name: Scan Amazon tab (content + orphans, report)
         if: ${{ !cancelled() }}
         env:
+          LISTINGS_CACHE: "listings_cache.json"
           SHEET_TAB: "Amazon"
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
@@ -73,6 +75,7 @@ jobs:
       - name: Zero stock on mismatched (first tab)
         if: ${{ !cancelled() }}
         env:
+          LISTINGS_CACHE: "listings_cache.json"
           SHEET_TAB: ""
           DRY_RUN: "0"
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
@@ -95,6 +98,7 @@ jobs:
       - name: Zero stock on mismatched (Amazon tab)
         if: ${{ !cancelled() }}
         env:
+          LISTINGS_CACHE: "listings_cache.json"
           SHEET_TAB: "Amazon"
           DRY_RUN: "0"
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
@@ -117,6 +121,7 @@ jobs:
       - name: Price/stock audit with fix (defended SKUs excluded)
         if: ${{ !cancelled() }}
         env:
+          LISTINGS_CACHE: "listings_cache.json"
           FIX: "1"
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}

@@ -14,6 +14,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 from onbuy_client import BASE_URL, OnBuyClient
+import listings_cache
 import sku_aliases
 from retry_utils import with_retry
 
@@ -36,8 +37,14 @@ def main():
         raise SystemExit("OnBuy auth failed")
     listings = {}
     name_key = None
+    # One shared sweep per nightly job: the first step fetches and saves,
+    # the other four steps reuse it (see listings_cache.py for why).
+    raw_items = listings_cache.load()
+    fetched = raw_items is None
+    if fetched:
+        raw_items = []
     offset, limit = 0, 100
-    while True:
+    while fetched:
         def _page(off=offset):
             # OnBuy GET quota / transient server trouble must not kill a
             # sweep mid-way (nightly 2026-09-20: Arden 429 after three
@@ -66,27 +73,30 @@ def main():
                 items = _i2
         if not isinstance(items, list) or not items:
             break
-        if offset == 0:
-            first = dict(items[0] or {})
-            print(f"first item keys: {sorted(first.keys())}")
-            for k in ("product_name", "name", "title", "product_title"):
-                if first.get(k):
-                    name_key = k
-                    break
-            print(f"name field: {name_key}")
-            if not name_key:
-                print("NO NAME FIELD on listings - scan by name impossible via this endpoint")
-                return
-        for it in items:
-            it = it or {}
-            sku = sku_aliases.to_true(it.get("sku"))
-            if sku:
-                listings[sku] = (str(it.get(name_key) or "").strip(),
-                                 str(it.get("created_at") or "")[:16],
-                                 it.get("price"), it.get("stock"))
+        raw_items.extend(items)
         if len(items) < limit:
             break
         offset += limit
+    if fetched:
+        listings_cache.save(raw_items)
+    if raw_items:
+        first = dict(raw_items[0] or {})
+        print(f"first item keys: {sorted(first.keys())}")
+        for k in ("product_name", "name", "title", "product_title"):
+            if first.get(k):
+                name_key = k
+                break
+        print(f"name field: {name_key}")
+        if not name_key:
+            print("NO NAME FIELD on listings - scan by name impossible via this endpoint")
+            return
+    for it in raw_items:
+        it = it or {}
+        sku = sku_aliases.to_true(it.get("sku"))
+        if sku:
+            listings[sku] = (str(it.get(name_key) or "").strip(),
+                             str(it.get("created_at") or "")[:16],
+                             it.get("price"), it.get("stock"))
     print(f"live listings fetched: {len(listings)}")
 
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])

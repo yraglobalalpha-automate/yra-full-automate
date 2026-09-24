@@ -18,6 +18,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 from onbuy_client import BASE_URL, OnBuyClient
+import listings_cache
 from retry_utils import RateLimitError, with_retry
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -43,8 +44,13 @@ def main():
     if not onbuy.authenticate():
         raise SystemExit("OnBuy auth failed")
     listings = {}
+    # One shared sweep per nightly job (see listings_cache.py).
+    raw_items = listings_cache.load()
+    fetched = raw_items is None
+    if fetched:
+        raw_items = []
     offset, limit = 0, 100
-    while True:
+    while fetched:
         def _page(off=offset):
             # OnBuy GET quota / transient server trouble must not kill a
             # sweep mid-way (nightly 2026-09-20: Arden 429 after three
@@ -73,16 +79,19 @@ def main():
                 items = _i2
         if not isinstance(items, list) or not items:
             break
-        for it in items:
-            it = it or {}
-            sku = str(it.get("sku") or "").strip()
-            if sku:
-                listings[sku] = (str(it.get("name") or "").strip(),
-                                 str(it.get("stock") or "").strip(),
-                                 str(it.get("price") or "").strip())
+        raw_items.extend(items)
         if len(items) < limit:
             break
         offset += limit
+    if fetched:
+        listings_cache.save(raw_items)
+    for it in raw_items:
+        it = it or {}
+        sku = str(it.get("sku") or "").strip()
+        if sku:
+            listings[sku] = (str(it.get("name") or "").strip(),
+                             str(it.get("stock") or "").strip(),
+                             str(it.get("price") or "").strip())
     log.info("live listings: %d", len(listings))
 
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
