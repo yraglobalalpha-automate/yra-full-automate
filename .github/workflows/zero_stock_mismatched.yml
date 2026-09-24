@@ -1,8 +1,6 @@
 name: Zero Stock Mismatched (one-off)
 
 on:
-  schedule:
-    - cron: "40 */4 * * *"  # temporary guard: re-zero rows rotation re-stocked; remove when the content incident closes
   workflow_dispatch:
     inputs:
       dry_run:
