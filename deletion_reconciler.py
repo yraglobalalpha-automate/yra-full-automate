@@ -234,6 +234,7 @@ def run(book, onbuy):
                 "Delist reconciler: sheet-deleted products taken off OnBuy",
                 f"Stock zeroed now (deleted after {GRACE_HOURS:.0f}h if still absent): "
                 f"{', '.join(zeroed) or '-'}\nDeleted from OnBuy: {', '.join(deleted) or '-'}\n"
-                f"Re-add a row with the SKU to keep its listing (pardons automatically).")
+                f"Re-add a row with the SKU to keep its listing (pardons automatically).",
+                routine=True)
         except Exception as exc:  # noqa: BLE001
             print(f"delist: alert email failed ({exc})")

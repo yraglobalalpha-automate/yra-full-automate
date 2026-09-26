@@ -19,7 +19,14 @@ from email.mime.text import MIMEText
 logger = logging.getLogger("onbuy_sync")
 
 
-def send_alert_email(subject, body):
+def send_alert_email(subject, body, routine=False):
+    # Routine per-run reports fold into the Daily Fleet Digest (user policy
+    # 2026-09-26: ONE runs-report mail a day, not one per run). Incident
+    # mails - crashes, aborts, misplaced links, mismatch findings, limit
+    # changes - stay per-event. EMAIL_PER_RUN=1 restores per-run reports.
+    if routine and (os.getenv("EMAIL_PER_RUN") or "0").strip().lower() not in ("1", "yes", "true"):
+        logger.info("Routine report email suppressed (daily digest carries it): %s", subject)
+        return
     host = os.getenv("SMTP_HOST") or "smtp.gmail.com"
     port = int(os.getenv("SMTP_PORT") or "465")
     user = os.getenv("SMTP_USER")

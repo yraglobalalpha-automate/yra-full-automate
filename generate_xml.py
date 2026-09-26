@@ -2801,6 +2801,7 @@ def main():
             f"Updated rows: {updated_count}\n"
             f"Feed products: {feed_count}, skipped: {skipped_feed}\n"
             "Check the GitHub Actions run log for details.",
+            routine=True,
         )
 
     if run_had_errors:
