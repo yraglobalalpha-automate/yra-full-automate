@@ -16,7 +16,10 @@ from retry_utils import RateLimitError, raise_for_status, with_retry
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-SKUS = [s.strip() for s in (os.getenv("DELETE_SKUS") or "").split(",") if s.strip()]
+# A legacy SKU can itself contain a comma ("081005512378 - M,yousaf") -
+# the dispatch then sets DELETE_SKUS_SEP to a character no SKU uses.
+_SEP = os.getenv("DELETE_SKUS_SEP") or ","
+SKUS = [s.strip() for s in (os.getenv("DELETE_SKUS") or "").split(_SEP) if s.strip()]
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
 
 

@@ -9,6 +9,10 @@ on:
       delete_skus:
         description: "Comma-separated SKUs to DELETE from OnBuy (required)"
         required: true
+      sep:
+        description: "Separator inside delete_skus (set e.g. | when a SKU contains commas)"
+        required: false
+        default: ","
 
 # Reads the live OnBuy listings - shares the API quota/token with the sync,
 # so queue behind it rather than overlapping (see run.yml for why).
@@ -37,6 +41,7 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
           DELETE_SKUS: ${{ inputs.delete_skus }}
+          DELETE_SKUS_SEP: ${{ inputs.sep }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
           ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
