@@ -276,7 +276,20 @@ def main():
             repricers.append((sku, target, stock))
         else:
             counts["held"] += 1
-            log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "HELD", "", f"{floor:.2f}", now])
+            # A below-floor contest is ABANDONED, not merely held (user
+            # 2026-09-28): the Buy Box is never chased under the margin
+            # bar, so a live price already sitting under the floor goes
+            # back to the sheet price (or the floor when the sheet has
+            # none) instead of quietly selling on at the old level.
+            if our < floor - 0.011:
+                _back = sell_by_sku.get(sku) or floor
+                if _back > our + 0.011:
+                    repricers.append((sku, round(_back, 2), stock))
+                    log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "HELD-RESTORED", f"{_back:.2f}", f"{floor:.2f}", now])
+                else:
+                    log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "HELD", "", f"{floor:.2f}", now])
+            else:
+                log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "HELD", "", f"{floor:.2f}", now])
     # A SKU on the previous tab that is no longer contested (and not
     # merely unknown this run) goes back to the sheet price now, not
     # at the next audit. If a competitor undercuts again, the next
