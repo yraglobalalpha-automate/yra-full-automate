@@ -46,13 +46,10 @@ from retry_utils import PermanentError, RateLimitError, with_retry
 SHEET_NAME = "YRA_Full_Feed_Master"
 LOG_TAB = "BuyBox"
 UNDERCUT_PENCE = int(os.getenv("UNDERCUT_PENCE") or "1")
-# The fee comes off the SELLING price (pricing.py, 2026-09-01), so the floor
-# DIVIDES by (1 - fee) rather than adding the fee to cost: 1.15 / 0.80 =
-# 1.4375. The old flat 1.35 retained only ~8% after commission, not the 15%
-# it was written to protect - the defense could undercut into that gap.
+# The floor keeps DEFENSE_PROFIT_PERCENT of the SELLING price after the
+# commission (user 2026-09-28) - the old 15%-of-cost floor left only
+# ~11% of the sale and read as a loss-level margin on the dashboard.
 DEFENSE_PROFIT_PERCENT = float(os.getenv("DEFENSE_PROFIT_PERCENT") or "15")
-DEFENSE_MULT = float(os.getenv("DEFENSE_MULT") or round(
-    (1 + DEFENSE_PROFIT_PERCENT / 100) / (1 - pricing.PLATFORM_FEE_PERCENT / 100), 4))
 CHECK_BATCH = int(os.getenv("CHECK_BATCH") or "500")  # OnBuy: max 1,000 SKUs/request, no separate rate limit (support, 2026-08-24)
 PUSH_ENABLED = (os.getenv("ONBUY_API_PUSH_ENABLED") or "").strip().lower() == "true"
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "") or not PUSH_ENABLED
@@ -74,15 +71,15 @@ PROTECTED_SKUS = _load_protected()
 
 
 def floor_price(cost, shipping, rule=None):
-    """The lowest price that still keeps DEFENSE_PROFIT_PERCENT after the
-    commission - the category's real tier when the store runs in
-    FEE_MODE=category (fees.py, 2026-09-09), else the flat multiplier."""
+    """The lowest price that still leaves DEFENSE_PROFIT_PERCENT of the
+    SELLING price after the commission - the category's real tier when
+    the store runs in FEE_MODE=category, else the flat rate (with the
+    1.5-point uplift either way)."""
     base = cost + shipping
     if base <= 0:
         return None
-    if rule is not None:
-        return round(pricing.price_for_profit(base, DEFENSE_PROFIT_PERCENT, rule), 2)
-    return round(base * DEFENSE_MULT, 2)
+    p = pricing.price_for_margin_of_price(base, DEFENSE_PROFIT_PERCENT, rule)
+    return round(p, 2) if p else None
 
 
 def to_f(v):

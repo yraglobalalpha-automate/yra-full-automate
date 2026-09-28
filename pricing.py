@@ -194,6 +194,42 @@ def price_for_retained(retained, rule=None, mode=None):
     return price
 
 
+def price_for_margin_of_price(base_cost, margin_pct, rule=None, mode=None):
+    """The lowest price whose profit AFTER commission is at least
+    margin_pct of the PRICE itself: S - fee(S) - base >= margin*S. The Buy
+    Box floor's definition (user 2026-09-28): margin measured on the sale,
+    not on cost - 15% of cost was only ~11% of the sale. None when the fee
+    plus the margin leaves (almost) nothing of the price."""
+    if base_cost <= 0:
+        return None
+    m = margin_pct / 100.0
+    if rule is None:
+        denom = 1 - (PLATFORM_FEE_PERCENT + FEE_UPLIFT_PERCENT) / 100.0 - m
+        return base_cost / denom if denom > 0.02 else None
+    mode = (mode or FEE_TIER_MODE)
+    r1 = (rule.lower_pct + FEE_UPLIFT_PERCENT) / 100.0
+    d1 = 1 - r1 - m
+    if d1 <= 0.02:
+        return None
+    price = base_cost / d1
+    if rule.tiered and price > rule.threshold:
+        r2 = (rule.upper_pct + FEE_UPLIFT_PERCENT) / 100.0
+        d2 = 1 - r2 - m
+        if d2 <= 0.02:
+            return None
+        if mode == "step":
+            above = base_cost / d2
+            price = above if above > rule.threshold else rule.threshold + 0.01
+        else:
+            # S(1-m) - [T*r1 + (S-T)*r2] = base -> S = (base + T*(r1-r2)) / (1 - m - r2)
+            price = (base_cost + rule.threshold * (r1 - r2)) / d2
+    # If the percentage fee this price implies is under the rule's minimum
+    # fee, the flat minimum binds instead: S - min_fee - base >= m*S.
+    if rule.min_fee and (price * (1 - m) - base_cost) < rule.min_fee:
+        price = (base_cost + rule.min_fee) / (1 - m)
+    return price
+
+
 def price_for_profit(total_cost, profit_pct, rule=None, platform_fee_percent=None):
     """Price that retains total_cost x (1 + profit%) after commission."""
     if total_cost <= 0:
