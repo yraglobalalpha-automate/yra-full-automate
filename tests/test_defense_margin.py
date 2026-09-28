@@ -1,5 +1,10 @@
 """Buy Box floor: profit is DEFENSE_PROFIT_PERCENT of the SELLING price
 after commission (user 2026-09-28), not of cost."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import pricing
 
 
