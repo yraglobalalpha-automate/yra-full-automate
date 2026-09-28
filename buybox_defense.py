@@ -181,6 +181,22 @@ def main():
     ss = gspread.authorize(creds).open(SHEET_NAME)
     main_sheet = ss.sheet1
     cost_by_sku = {}
+    sell_by_sku = {}
+    # Restore-on-contest-end (2026-09-28, Arden wrong-price order
+    # 890197849991): a defended price stayed at the floor after its
+    # contest ended - the nightly audit had excluded it while the OLD
+    # tab still listed it, so the floor survived up to two more days.
+    # The defense now restores leavers itself: previous-tab SKUs that
+    # are no longer contested go back to the sheet's selling price.
+    prev_contested = set()
+    try:
+        _old_tab = ss.worksheet(LOG_TAB)
+        prev_contested = {str(v).replace(",", "").strip()
+                          for v in with_retry(lambda: _old_tab.col_values(1),
+                                              what="old buybox tab", max_attempts=3)[2:]}
+        prev_contested.discard("")
+    except gspread.WorksheetNotFound:
+        pass
     main_rows = with_retry(lambda: main_sheet.get_all_records(), what="sheet read", max_attempts=3)
     # Cost map keys come from the SKU column's DISPLAYED text - numericise
     # strips leading zeros, and live SKUs carry them (see generate_xml.py's
@@ -210,6 +226,9 @@ def main():
         ship = to_f(r.get("Shipping Cost (£)")) or 0.0
         if cost:
             cost_by_sku[sku] = (cost, ship, fees.rule_for_category_path(r.get("Category")))
+        sell = to_f(r.get("Selling Price (£)"))
+        if sell:
+            sell_by_sku[sku] = sell
     print(f"sheet rows with cost: {len(cost_by_sku)} | protected: {len(PROTECTED_SKUS)} | push enabled: {PUSH_ENABLED} | dry run: {DRY_RUN}")
 
     onbuy = OnBuyClient()
@@ -223,18 +242,21 @@ def main():
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     counts = {"winning": 0, "no data": 0, "cheaper-not-winning": 0, "no cost": 0, "reprice": 0, "held": 0}
     log_rows, repricers = [], []
+    no_data_skus = set()
     for sku in candidates:
         our_list, stock = listings[sku]
         our, lead, winning = win.get(sku, (None, None, None))
         our = our or our_list
         if winning is None or not our:
             counts["no data"] += 1
+            no_data_skus.add(sku)
             continue
         if winning:
             counts["winning"] += 1
             continue
         if not lead:
             counts["no data"] += 1
+            no_data_skus.add(sku)
             continue
         if lead >= our:
             counts["cheaper-not-winning"] += 1
@@ -258,14 +280,31 @@ def main():
         else:
             counts["held"] += 1
             log_rows.append([sku, f"{our:.2f}", f"{lead:.2f}", "no", "HELD", "", f"{floor:.2f}", now])
+    # A SKU on the previous tab that is no longer contested (and not
+    # merely unknown this run) goes back to the sheet price now, not
+    # at the next audit. If a competitor undercuts again, the next
+    # defense run re-lowers it - same equilibrium, hours sooner.
+    contested_now = {r[0] for r in log_rows}
+    restorers = []
+    for sku in sorted(prev_contested - contested_now - set(PROTECTED_SKUS) - no_data_skus):
+        if sku not in listings or sku not in sell_by_sku:
+            continue
+        live_p, stock = listings[sku]
+        target = round(sell_by_sku[sku], 2)
+        if live_p and target > live_p + 0.011:
+            restorers.append((sku, target, stock))
+    counts["restored"] = len(restorers)
     print("summary: " + " | ".join(f"{k}: {v}" for k, v in counts.items()))
     for sku, p, _ in repricers:
         print(f"  push {sku} -> {p:.2f}")
+    for sku, p, _ in restorers:
+        print(f"  restore {sku} -> {p:.2f} (contest ended)")
 
     pushed = failed = 0
-    if repricers and not DRY_RUN:
-        for c0 in range(0, len(repricers), 500):
-            chunk = repricers[c0:c0 + 500]
+    pushers = repricers + restorers
+    if pushers and not DRY_RUN:
+        for c0 in range(0, len(pushers), 500):
+            chunk = pushers[c0:c0 + 500]
             try:
                 results = onbuy.update_listings_by_sku_batch(chunk)
             except RateLimitError:
@@ -281,7 +320,7 @@ def main():
                     pushed += 1
             time.sleep(1.0)
         print(f"pushed: {pushed} | failed: {failed}")
-    elif repricers:
+    elif pushers:
         print("DRY RUN - no prices pushed")
 
     # Contested picture -> "BuyBox" tab (replaced every run).
