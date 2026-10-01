@@ -2,7 +2,7 @@ name: YRA Full-Auto Sync
 
 on:
   schedule:
-    - cron: "31 1-23/2 * * *"   # every 2h on an unpopular minute - GitHub drops busy-minute crons under load (observed 5-11h gaps); denser asks + odd minutes net a steadier real cadence, and the per-run batch (budget/RUNS_PER_DAY) keeps daily spend identical
+    - cron: "31 * * * *"   # hourly (was every 2h): GitHub delivers only ~4 of 12 scheduled runs a day here (gaps up to 12h), so asking more often shortens the real gaps; the adaptive batch sizes each run from the time since the last one, so daily eBay spend stays at the budget
   workflow_dispatch:
     inputs:
       recategorize:
@@ -76,7 +76,7 @@ jobs:
           # 50/50 split of the shared YRA eBay keyset with the semi line
           # (yra-global-onbuy-sync drops to 2000 at this repo's go-live).
           EBAY_DAILY_CALL_BUDGET: ${{ vars.EBAY_DAILY_CALL_BUDGET || '2000' }}
-          RUNS_PER_DAY: ${{ vars.RUNS_PER_DAY || '12' }}
+          RUNS_PER_DAY: ${{ vars.RUNS_PER_DAY || '24' }}
           # Commission model: "category" prices against OnBuy's real tier per
           # category (fees.py); unset/anything else keeps the flat 20%.
           FEE_MODE: ${{ vars.FEE_MODE }}

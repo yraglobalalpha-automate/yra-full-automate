@@ -14,6 +14,7 @@ import json
 import requests
 from oauth2client.service_account import ServiceAccountCredentials
 
+import rotation
 import sheet_tabs
 
 import notify
@@ -66,18 +67,10 @@ RUNS_PER_DAY = int(os.getenv("RUNS_PER_DAY") or "8")
 # instead of the budget-derived one.
 _MAX_PRODUCTS_PER_RUN_OVERRIDE = os.getenv("MAX_PRODUCTS_PER_RUN")
 
-# Risk-weighted rotation (2026-09-22): rows with 1..MAX units left are
-# the oversell-prone ones - they hold SHARE of every batch's slots on
-# their own oldest-first lane (see PRODUCT ORDER).
-LOW_STOCK_PRIORITY_MAX = int(os.getenv("LOW_STOCK_PRIORITY_MAX") or "5")
-# 70% of every batch (user 2026-09-22: the majority of the budget goes
-# to 1..5-stock rows so ALL of them re-check within hours; unused
-# priority slots flow to the rest, which rotates on what remains).
-LOW_STOCK_BATCH_SHARE = float(os.getenv("LOW_STOCK_BATCH_SHARE") or "0.7")
-# How often each low-stock row should re-check per day (default 4 =
-# every ~6h); the lane takes only the slots that needs, up to the
-# share cap, so the general backlog keeps the rest of the budget.
-LOW_STOCK_CYCLES_PER_DAY = int(os.getenv("LOW_STOCK_CYCLES_PER_DAY") or "4")
+# Re-check order = age x risk weight (rotation.py, 2026-10-01). It replaced
+# the 2026-09-22 "low-stock lane", which spent ~half the daily eBay budget
+# re-checking the few hundred 1-4 unit rows every run while thousands of
+# default-stock rows went 2-5 days unchecked.
 
 # Which worksheet to run: unset = the first tab (eBay rows, the original
 # pipeline); "Amazon" = the Amazon tab - same header row and downstream
@@ -667,6 +660,29 @@ def get_ebay_token():
         return None
 
 
+def ebay_calls_remaining(token):
+    """Calls left in this application's daily Browse window, read from eBay's
+    Developer Analytics (None when unreadable - a guard must never kill the
+    run). The window resets at 07:00 UTC; a batch that outruns it earns a 429
+    on every remaining row."""
+    try:
+        resp = requests.get(
+            "https://api.ebay.com/developer/analytics/v1_beta/rate_limit/",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"api_context": "buy", "api_name": "browse"}, timeout=30)
+        if resp.status_code != 200:
+            return None
+        for rl in resp.json().get("rateLimits", []):
+            for res in rl.get("resources", []):
+                if res.get("name") == "buy.browse":
+                    for rate in res.get("rates", []):
+                        if rate.get("timeWindow") == 86400 and rate.get("remaining") is not None:
+                            return int(rate["remaining"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not read eBay's remaining call allowance (%s) - sizing from the budget only", exc)
+    return None
+
+
 ITEM_GROUP_ERROR_ID = 11006  # "The legacy Id is invalid... use get_items_by_item_group"
 
 
@@ -1040,10 +1056,17 @@ def main():
                 # Last Checked Time cells are naive PK wall clock - compare naive to naive
                 _now_pk = datetime.now(PK_TZ).replace(tzinfo=None)
                 _elapsed_h = (_now_pk - _newest).total_seconds() / 3600.0
-                if 0 < _elapsed_h <= 24:
+                if _elapsed_h > 0:
+                    # A gap over 24h counts as 24h (an outage must not shrink
+                    # the next batch back to the fixed size), and one run may
+                    # carry up to HALF the day's budget. The old cap was a
+                    # quarter (1,200 at YRA = six hours' worth), so every gap
+                    # beyond 6h - routine with GitHub's cron drops - threw
+                    # budget away: ~3,900 of 4,800 calls used per day.
+                    _elapsed_h = min(_elapsed_h, 24.0)
                     _adaptive = int(EBAY_DAILY_CALL_BUDGET * _elapsed_h / 24.0)
                     MAX_PRODUCTS_PER_RUN = min(max(MAX_PRODUCTS_PER_RUN, _adaptive),
-                                               EBAY_DAILY_CALL_BUDGET // 4)
+                                               EBAY_DAILY_CALL_BUDGET // 2)
         except Exception as exc:  # noqa: BLE001 - sizing must never kill a run
             logger.warning("adaptive batch sizing failed (%s) - using the fixed size", exc)
 
@@ -1375,8 +1398,15 @@ def main():
             # them left sold-out listings live on the front end while the
             # listing stayed unaddressable (SKU 198651491114, 2026-08-24).
             # Zero them too; not-yet-addressable ones bounce and retry.
+            # A FROZEN row (Failed:/BRAND BLOCKED - duplicate supplier link, SKU
+            # conflict...) never reaches the normal push, so a LIVE one could not
+            # be taken offline when its supplier sold out: 350 live duplicates sat
+            # untouchable at YRA (2026-10-01, wrong order). Zeroing is the one
+            # push that is always safe, so frozen-but-live rows are included.
+            _frozen_live = (status.startswith(("Failed", "BRAND BLOCKED"))
+                            and str(row.get("OnBuy Product Created") or "").strip().upper() == "TRUE")
             if not (status.startswith("Synced") or status.startswith("Pending Approval")
-                    or status.startswith("Awaiting OnBuy go-live")):
+                    or status.startswith("Awaiting OnBuy go-live") or _frozen_live):
                 continue
             raw_stock = str(row.get("Stock") if row.get("Stock") is not None else "").strip()
             if raw_stock == "":
@@ -1673,47 +1703,17 @@ def main():
     if FULL_REFRESH:
         sorted_data = processable
     else:
-        # Risk-weighted rotation (2026-09-22, second oversold order):
-        # oversells happen on listings with only a few units left - the
-        # source sells out and plain oldest-first may not look again for
-        # 1-2 days on catalogs bigger than the eBay call budget (5,136
-        # GTV rows vs 4,500 calls/day when this shipped; SKU
-        # 653709952448 was 43h stale when its order landed). Low-stock
-        # rows get a reserved share of every batch on their own oldest-
-        # first lane, cutting their re-check cycle to hours; the rest
-        # keep rotating oldest-first behind them.
-        def _checked_key(x):
-            return parse_time(x[1].get("Last Checked Time", ""))
-
-        def _sheet_stock(row):
-            try:
-                return int(float(str(row.get("Stock") or "").replace(",", "") or -1))
-            except (TypeError, ValueError):
-                return -1
-
-        # Inside the priority lane, 1-unit rows first (one sale kills
-        # them), then 2..MAX, oldest-first within each stock level -
-        # the lane holds thousands of rows (YRA 5,302 on 2026-09-23),
-        # so ordering by risk matters as much as membership.
-        _low = sorted((p for p in processable
-                       if 1 <= _sheet_stock(p[1]) <= LOW_STOCK_PRIORITY_MAX),
-                      key=lambda p: (_sheet_stock(p[1]), _checked_key(p)))
-        _low_set = {id(p) for p in _low}
-        _rest = sorted((p for p in processable if id(p) not in _low_set), key=_checked_key)
-        # Size the low-stock lane by NEED, capped at the configured
-        # share: enough slots for every low-stock row to re-check
-        # LOW_STOCK_CYCLES_PER_DAY times a day. Burning the full 70%
-        # on a small low set re-checked the same rows every 2h while
-        # the general backlog - where the ended-listing class hides -
-        # starved (YRA 2026-09-22, SKU 630491351925, source ended
-        # 31 Aug, order landed before its first post-fix re-check).
-        _cap = max(1, int(MAX_PRODUCTS_PER_RUN * LOW_STOCK_BATCH_SHARE))
-        _needed = -(-len(_low) * LOW_STOCK_CYCLES_PER_DAY // max(1, RUNS_PER_DAY))
-        _share = min(_cap, max(1, _needed)) if _low else 0
-        if _low:
-            logger.info("Rotation: %d low-stock row(s) (1..%d units) hold %d of %d batch slots",
-                        len(_low), LOW_STOCK_PRIORITY_MAX, min(_share, len(_low)), MAX_PRODUCTS_PER_RUN)
-        sorted_data = _low[:_share] + sorted(_low[_share:] + _rest, key=_checked_key)
+        # Re-check order (2026-10-01): age x risk weight - see rotation.py.
+        # Few units left = checked more often, an out-of-stock row or a
+        # flagged row that is not live on OnBuy less often, and no row is
+        # ever starved (the 2026-09-22 lane left 3,922 default-stock rows
+        # 2-5 days stale; one of them oversold). Frozen rows that ARE live
+        # keep a normal weight: they are on sale.
+        sorted_data = rotation.rotation_order(
+            processable, datetime.now(PK_TZ).replace(tzinfo=None), parse_time)
+        _ri, _ro, _rh = rotation.describe(processable)
+        logger.info("Rotation: scored by age x risk - %d live in-stock row(s), %d out of stock, "
+                    "%d flagged and not live (low weight)", _ri, _ro, _rh)
 
     # While testing the OnBuy API push against a specific SKU allowlist, move
     # those SKUs to the front of the queue - otherwise a manual test run can
@@ -1746,6 +1746,21 @@ def main():
         )
         sys.exit(1)
 
+    if needs_ebay and token:
+        # Size the batch to what eBay says is left today (2026-10-01): the
+        # adaptive batch can now carry up to half the daily budget, and a run
+        # that outruns the window gets a 429 on every remaining row.
+        _eb_left = ebay_calls_remaining(token)
+        if _eb_left is not None:
+            _eb_reserve = int(os.getenv("EBAY_CALL_RESERVE") or "150")
+            _eb_allowed = max(0, _eb_left - _eb_reserve)
+            logger.info("eBay allowance: %d call(s) left in today's window (reserve %d)", _eb_left, _eb_reserve)
+            if _eb_allowed < MAX_PRODUCTS_PER_RUN:
+                logger.warning("Batch cut from %d to %d row(s) to stay inside eBay's daily allowance",
+                               MAX_PRODUCTS_PER_RUN, _eb_allowed)
+                MAX_PRODUCTS_PER_RUN = _eb_allowed
+
+    _rl_streak = 0  # consecutive eBay rate-limit refusals - see the fetch loop
     removed_skus = []  # matching SKUs, for the Supabase delete + summary log
     supabase_rows = []  # one upsert for the whole run - every row must have
     # identical keys (PostgREST's bulk-upsert requirement) AND every NOT NULL
@@ -1893,8 +1908,19 @@ def main():
                 fetch_failures += 1
                 run_had_errors = True
                 logger.error("Row %d (%s): fetch failed after retries, leaving existing values untouched - %s", i, url, exc)
+                if isinstance(exc, RateLimitError):
+                    # Every refused row costs ~7s of retries: after 20 in a row
+                    # the allowance is gone - stop instead of burning hours.
+                    _rl_streak += 1
+                    if _rl_streak >= 20:
+                        logger.error("eBay rate limit: %d fetches in a row refused - halting eBay fetches for this run",
+                                     _rl_streak)
+                        break
+                else:
+                    _rl_streak = 0
                 continue
 
+        _rl_streak = 0
         stock = ebay_data["stock"]
         cost_price = ebay_data["price"]
 
@@ -2139,6 +2165,14 @@ def main():
             _status_now = str(existing_fields.get(sku, {}).get("Sync Status") or row.get("Sync Status") or "")
             if _status_now.startswith(("Synced", "Pending Approval", "Awaiting OnBuy go-live")):
                 oos_missed_push.append((sku, selling_price))
+
+        # A frozen row is gated out of the pushes, but if its listing is LIVE and
+        # the supplier now shows it out of stock, zero it (always-safe direction).
+        if (sku and onbuy_ready and onbuy_halt_reason is None and amazon_flag
+                and stock == 0 and selling_price > 0
+                and str(existing_fields.get(sku, {}).get("OnBuy Product Created")
+                        or row.get("OnBuy Product Created") or "").strip().upper() == "TRUE"):
+            oos_missed_push.append((sku, selling_price))
 
         if (sku and onbuy_ready and onbuy_halt_reason is None and not amazon_flag
                 and should_push_to_onbuy(sku) and onbuy_pushes_this_run < ONBUY_MAX_PUSHES_PER_RUN):
@@ -2630,21 +2664,36 @@ def main():
         # dicts on every attempt so a retry never sees an already-mutated one.
         original_pairs = [(u["range"], u["values"]) for u in all_sheet_updates]
 
-        def _do_sheet_update():
-            fresh_updates = [{"range": r, "values": v} for r, v in original_pairs]
-            return sheet.batch_update(fresh_updates)
+        # Written in size-bounded chunks (2026-10-01): one request carrying a
+        # 2,400-row run (descriptions + image lists) risks Google's request
+        # size limit and was all-or-nothing. A chunk that fails after its
+        # retries is logged and the others still land.
+        def _sheet_chunks(pairs, max_ranges=4000, max_bytes=2_500_000):
+            cur, size = [], 0
+            for rng, vals in pairs:
+                sz = len(rng) + len(json.dumps(vals, ensure_ascii=False)) + 40
+                if cur and (len(cur) >= max_ranges or size + sz > max_bytes):
+                    yield cur
+                    cur, size = [], 0
+                cur.append((rng, vals))
+                size += sz
+            if cur:
+                yield cur
 
-        try:
-            with_retry(_do_sheet_update, what="sheet batch update", max_attempts=3)
-        except Exception as exc:
-            run_had_errors = True
-            # This is an all-or-nothing commit for the whole run's Sheet writes -
-            # a real trade-off against doing one API call per row (which risked
-            # Google's own rate limits once batch sizes grew past a hardcoded
-            # 12/run). OnBuy/Supabase may already reflect this run's changes
-            # even if this call fails - retried 3x before giving up, so a
-            # transient blip is unlikely to lose everything.
-            logger.error("Sheet batch update failed after retries - this run's Sheet changes may not be saved: %s", exc)
+        _chunk_failed = 0
+        for _part in _sheet_chunks(original_pairs):
+            def _do_sheet_update(part=_part):
+                return sheet.batch_update([{"range": r, "values": v} for r, v in part])
+
+            try:
+                with_retry(_do_sheet_update, what="sheet batch update", max_attempts=3)
+            except Exception as exc:
+                _chunk_failed += 1
+                run_had_errors = True
+                logger.error("Sheet batch update chunk failed after retries - part of this run's "
+                             "Sheet changes may not be saved: %s", exc)
+        if _chunk_failed:
+            logger.error("%d sheet write chunk(s) failed", _chunk_failed)
 
     supabase_rows = dedupe_rows_by_sku(supabase_rows, "Supabase export")
     supabase_ok = supabase_db.upsert_products(supabase_rows)
