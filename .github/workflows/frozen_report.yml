@@ -1,0 +1,28 @@
+name: Frozen Rows Report (read-only)
+
+# Reads the Google Sheet only; writes a CSV artifact. Outside the onbuy-api
+# group - safe alongside any run.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Report
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: python frozen_report.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frozen-rows
+          path: frozen_rows.csv
