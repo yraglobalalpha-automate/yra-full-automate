@@ -12,6 +12,8 @@ import time
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+
+import sheet_tabs
 import json
 
 from onbuy_client import BASE_URL, OnBuyClient
@@ -31,7 +33,7 @@ def sheet_rows():
         json.loads(os.environ["GOOGLE_CREDENTIALS"]),
         ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
     book = with_retry(lambda: gspread.authorize(creds).open(SHEET_NAME), what="sheet open", max_attempts=3)
-    tabs = [book.sheet1]
+    tabs = [sheet_tabs.product_sheet(book)]
     try:
         amz = book.worksheet("Amazon")
         if amz.title != tabs[0].title:

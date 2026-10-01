@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 
 import gspread
 
+import sheet_tabs
 import supabase_db
 from onbuy_client import BASE_URL
 from retry_utils import RateLimitError, with_retry
@@ -35,6 +36,27 @@ HEADER = ["SKU", "First Missing At", "Stock Zeroed", "Deleted At", "Note"]
 GRACE_HOURS = float(os.getenv("DELIST_GRACE_HOURS") or "24")
 MAX_DELETES = int(os.getenv("DELIST_MAX_DELETES_PER_RUN") or "200")
 TS = "%Y-%m-%d %H:%M"
+
+# Circuit breaker (2026-10-01). One bad sheet read - a wrong or truncated
+# tab - makes every created listing look deleted; on 2026-09-30 that zeroed
+# 5,019 live Makstore listings in one pass and queued 5,055 for deletion.
+# When the number of live listings this run would zero or hold for deletion
+# is both large in absolute terms and a big share of the registry, it is a
+# broken read, not that many real deletions: refuse, change nothing, alert.
+# A deliberate mass cleanup sets the DELIST_ALLOW_MASS repo variable.
+MASS_MIN = int(os.getenv("DELIST_MASS_MIN") or "300")
+MASS_FRACTION = float(os.getenv("DELIST_MASS_FRACTION") or "0.10")
+ALLOW_MASS = (os.getenv("DELIST_ALLOW_MASS") or "").strip().lower() in ("1", "yes", "true")
+# Zero/delete batches at least this large are never "routine" mail.
+BIG_BATCH = 25
+
+
+def mass_action_tripped(pending, created, min_count=MASS_MIN, fraction=MASS_FRACTION, allow=ALLOW_MASS):
+    """True when `pending` live listings (to zero now plus already queued)
+    is implausibly many against `created` registry listings."""
+    if allow or created <= 0:
+        return False
+    return pending >= min_count and pending >= fraction * created
 
 
 def _now():
@@ -58,7 +80,10 @@ def _product_tab_skus(book):
     numeric SKUs with/without leading zeros - 2026-09-19 lesson; a
     spelling twin on the sheet must count as present)."""
     out = set()
-    tabs = [book.sheet1]
+    # By NAME, never by position (sheet_tabs.py: a moved tab emptied this
+    # read on 2026-09-30), and a tab without a SKU column is an error, not
+    # an empty sheet.
+    tabs = [sheet_tabs.product_sheet(book)]
     try:
         amz = book.worksheet("Amazon")
         if amz.title != tabs[0].title:
@@ -68,7 +93,8 @@ def _product_tab_skus(book):
     for ws in tabs:
         headers = [str(h).strip() for h in ws.row_values(1)]
         if "SKU" not in headers:
-            continue
+            raise RuntimeError(f"product tab {ws.title!r} has no SKU column (row 1 reads {headers[:4]}) "
+                               "- refusing to treat the sheet as empty")
         for v in ws.col_values(headers.index("SKU") + 1)[1:]:
             v = str(v).replace(",", "").strip()
             if v:
@@ -145,6 +171,17 @@ def _delete_listing(onbuy, sku):
     return err or "no answer"
 
 
+def _alert_refusal(headline, detail):
+    """The reconciler declined to act - say so loudly (never routine mail)."""
+    print(f"delist: REFUSING - {headline}")
+    try:
+        import notify
+        notify.send_alert_email("Delist reconciler refused to act",
+                                f"{headline}\n\n{detail}", routine=False)
+    except Exception as exc:  # noqa: BLE001
+        print(f"delist: alert email failed ({exc})")
+
+
 def run(book, onbuy):
     if (os.getenv("DELIST_RECONCILER") or "1").strip().lower() in ("0", "no", "false"):
         print("delist: reconciler disabled (DELIST_RECONCILER)")
@@ -153,7 +190,12 @@ def run(book, onbuy):
     if not created:
         print("delist: no registry rows (or fetch failed) - nothing to reconcile")
         return
-    sheet_skus, sheet_zeroless = _product_tab_skus(book)
+    try:
+        sheet_skus, sheet_zeroless = _product_tab_skus(book)
+    except Exception as exc:  # noqa: BLE001 - an unreadable sheet must never read as an empty one
+        _alert_refusal("the product tabs could not be read safely",
+                       f"{exc}\nNothing was zeroed, queued or deleted this run.")
+        return
     missing = [r for r in created
                if r["sku"] not in sheet_skus and _zeroless(r["sku"]) not in sheet_zeroless]
     print(f"delist: registry created={len(created)} | on sheet={len(created) - len(missing)} | missing={len(missing)}")
@@ -172,31 +214,43 @@ def run(book, onbuy):
             pardoned.append(sku)
             del queue[sku]
 
-    # 2. new missing SKUs: probe, mark the already-gone, queue + zero the live
+    # 2. new missing SKUs: probe (read-only), CIRCUIT BREAKER, then mark the
+    # already-gone and queue + zero the live ones
     new = [r for r in missing if r["sku"] not in queue]
+    gone, to_queue = set(), []
     if new:
         gone = _check_gone(onbuy, [r["sku"] for r in new])
-        if gone:
-            supabase_db.mark_listing_inactive(sorted(gone))
-            print(f"delist: {len(gone)} missing SKU(s) already gone on OnBuy - registry marked inactive")
         to_queue = [r for r in new if r["sku"] not in gone]
-        if to_queue:
-            zero_batch = [(r["sku"], r["price"], 0) for r in to_queue if r["price"] and r["price"] > 0]
-            zero_ok = set()
-            for c in range(0, len(zero_batch), 500):
-                chunk = zero_batch[c:c + 500]
-                try:
-                    results = onbuy.update_listings_by_sku_batch(chunk)
-                    errs = {str((it or {}).get("sku") or "").strip(): str((it or {}).get("error") or "").strip()
-                            for it in results or []}
-                    zero_ok.update(s for s, _p, _st in chunk if not errs.get(s, "missing"))
-                except Exception as exc:  # noqa: BLE001
-                    print(f"delist: stock-zero batch failed ({exc}) - queued anyway, delete follows the grace window")
-            rows = [[r["sku"], now_s, (now_s if r["sku"] in zero_ok else ""), "", ""] for r in to_queue]
-            with_retry(lambda: tab.append_rows(rows, value_input_option="RAW", table_range="A1"),
-                       what="delist queue append", max_attempts=3)
-            zeroed = sorted(zero_ok)
-            print(f"delist: queued {len(to_queue)} (stock zeroed on {len(zeroed)}); delete after {GRACE_HOURS:.0f}h absence")
+    pending = len(to_queue) + sum(1 for e in queue.values() if not e["deleted"])
+    if mass_action_tripped(pending, len(created)):
+        _alert_refusal(
+            f"{pending} of {len(created)} created listings ({pending / len(created):.0%}) look deleted from the sheet",
+            "That is far more than any real round of row deletions - it looks like a broken sheet read "
+            f"(wrong or truncated tab). Product tabs read: {sheet_tabs.PRODUCT_TAB} + Amazon; "
+            f"{len(sheet_skus)} SKUs found on them. NOTHING was zeroed, queued or deleted, and queued "
+            "deletions are on hold. Check the spreadsheet's tabs (is 'Sheet1' intact?). If these really are "
+            "deliberate deletions, set the DELIST_ALLOW_MASS repo variable to 1 to proceed.")
+        return
+    if gone:
+        supabase_db.mark_listing_inactive(sorted(gone))
+        print(f"delist: {len(gone)} missing SKU(s) already gone on OnBuy - registry marked inactive")
+    if to_queue:
+        zero_batch = [(r["sku"], r["price"], 0) for r in to_queue if r["price"] and r["price"] > 0]
+        zero_ok = set()
+        for c in range(0, len(zero_batch), 500):
+            chunk = zero_batch[c:c + 500]
+            try:
+                results = onbuy.update_listings_by_sku_batch(chunk)
+                errs = {str((it or {}).get("sku") or "").strip(): str((it or {}).get("error") or "").strip()
+                        for it in results or []}
+                zero_ok.update(s for s, _p, _st in chunk if not errs.get(s, "missing"))
+            except Exception as exc:  # noqa: BLE001
+                print(f"delist: stock-zero batch failed ({exc}) - queued anyway, delete follows the grace window")
+        rows = [[r["sku"], now_s, (now_s if r["sku"] in zero_ok else ""), "", ""] for r in to_queue]
+        with_retry(lambda: tab.append_rows(rows, value_input_option="RAW", table_range="A1"),
+                   what="delist queue append", max_attempts=3)
+        zeroed = sorted(zero_ok)
+        print(f"delist: queued {len(to_queue)} (stock zeroed on {len(zeroed)}); delete after {GRACE_HOURS:.0f}h absence")
 
     # 3. grace window over -> delete
     due = [(sku, ent) for sku, ent in queue.items()
@@ -235,6 +289,6 @@ def run(book, onbuy):
                 f"Stock zeroed now (deleted after {GRACE_HOURS:.0f}h if still absent): "
                 f"{', '.join(zeroed) or '-'}\nDeleted from OnBuy: {', '.join(deleted) or '-'}\n"
                 f"Re-add a row with the SKU to keep its listing (pardons automatically).",
-                routine=True)
+                routine=(len(zeroed) + len(deleted) < BIG_BATCH))
         except Exception as exc:  # noqa: BLE001
             print(f"delist: alert email failed ({exc})")

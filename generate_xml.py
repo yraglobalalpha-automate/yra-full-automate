@@ -14,6 +14,8 @@ import json
 import requests
 from oauth2client.service_account import ServiceAccountCredentials
 
+import sheet_tabs
+
 import notify
 import fees
 import pricing
@@ -889,7 +891,7 @@ def main():
     # 2026-08-18) - one retry cycle rides them out.
     spreadsheet = with_retry(lambda: client.open("YRA_Full_Feed_Master"),
                              what="sheet open", max_attempts=3)
-    sheet = spreadsheet.worksheet(SHEET_TAB) if SHEET_TAB else spreadsheet.sheet1
+    sheet = spreadsheet.worksheet(SHEET_TAB) if SHEET_TAB else sheet_tabs.product_sheet(spreadsheet)
     logger.info("Worksheet: %s", sheet.title)
 
     # Header hygiene BEFORE reading the data: one stray space typed into a
@@ -1808,7 +1810,7 @@ def main():
         # listing - and counting them made a single legitimate adoption row
         # look duplicated (Makstore 2026-09-17: "appears on 2 sheet rows"
         # on rows that exist once, their twin being the BuyBox tracker).
-        _product_tabs = [spreadsheet.sheet1]
+        _product_tabs = [sheet_tabs.product_sheet(spreadsheet)]
         try:
             _amz_tab = spreadsheet.worksheet("Amazon")
             if _amz_tab.title != _product_tabs[0].title:
@@ -1861,7 +1863,7 @@ def main():
         # lives on the eBay tab would collide on OnBuy and in Supabase.
         if SHEET_TAB:
             try:
-                _first = spreadsheet.sheet1
+                _first = sheet_tabs.product_sheet(spreadsheet)
                 _fh = [str(h).strip() for h in _first.row_values(1)]
                 if "SKU" in _fh and _first.title != sheet.title:
                     ebay_tab_skus = {str(v).replace(",", "").strip()

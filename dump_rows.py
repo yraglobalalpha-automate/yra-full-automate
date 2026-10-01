@@ -15,6 +15,8 @@ import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+import sheet_tabs
+
 import keepa_client
 from retry_utils import with_retry
 
@@ -57,7 +59,7 @@ def main():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     book = with_retry(lambda: gspread.authorize(creds).open(SHEET_NAME), what="sheet open", max_attempts=3)
-    tab = book.worksheet(TAB) if TAB else book.sheet1
+    tab = book.worksheet(TAB) if TAB else sheet_tabs.product_sheet(book)
     values = tab.get_all_values()
     headers = [str(h).strip() for h in values[0]] if values else []
     idx = {h: i for i, h in enumerate(headers) if h}

@@ -11,6 +11,8 @@ import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+import sheet_tabs
+
 from retry_utils import with_retry
 
 SHEET_NAME = "YRA_Full_Feed_Master"
@@ -39,7 +41,7 @@ def main():
     # candidates come from the API, not the sheet), so counting all
     # worksheets pardoned 543 contested ORPHANS on 2026-09-19 - the
     # exact false-positive class the uniqueness guard hit on 09-17.
-    _tabs = [book.sheet1]
+    _tabs = [sheet_tabs.product_sheet(book)]
     try:
         _amz = book.worksheet("Amazon")
         if _amz.title != _tabs[0].title:

@@ -17,6 +17,8 @@ import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+import sheet_tabs
+
 from onbuy_client import BASE_URL, OnBuyClient
 import listings_cache
 from retry_utils import RateLimitError, with_retry
@@ -99,7 +101,7 @@ def main():
         creds_dict, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
     _book = gspread.authorize(creds).open("YRA_Full_Feed_Master")
     _tab = (os.getenv("SHEET_TAB") or "").strip()
-    sheet = _book.sheet1 if not _tab else _book.worksheet(_tab)
+    sheet = sheet_tabs.product_sheet(_book) if not _tab else _book.worksheet(_tab)
     print(f"worksheet: {sheet.title}")
     rows = sheet.get_all_records()
     # Displayed SKU text overrides numericise - leading zeros survive (see

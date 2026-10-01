@@ -37,6 +37,8 @@ from datetime import datetime, timezone
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+import sheet_tabs
+
 import fees
 import pricing
 from onbuy_client import BASE_URL, OnBuyClient
@@ -176,7 +178,7 @@ def main():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
         creds_dict, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
     ss = gspread.authorize(creds).open(SHEET_NAME)
-    main_sheet = ss.sheet1
+    main_sheet = sheet_tabs.product_sheet(ss)
     cost_by_sku = {}
     sell_by_sku = {}
     # Restore-on-contest-end (2026-09-28, Arden wrong-price order

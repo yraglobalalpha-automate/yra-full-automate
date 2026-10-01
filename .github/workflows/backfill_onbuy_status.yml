@@ -42,4 +42,13 @@ jobs:
           ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # Reconciler alerts (refusals, big zero/delete batches) need mail settings;
+          # DELIST_ALLOW_MASS=1 (repo variable) lets a deliberate mass cleanup through.
+          DELIST_ALLOW_MASS: ${{ vars.DELIST_ALLOW_MASS }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          ALERT_EMAIL_FROM: ${{ vars.ALERT_EMAIL_FROM }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
         run: python backfill_onbuy_status.py

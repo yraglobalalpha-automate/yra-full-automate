@@ -35,6 +35,8 @@ import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+import sheet_tabs
+
 import supabase_db
 from generate_xml import col_letter
 from onbuy_client import BASE_URL, OnBuyClient
@@ -331,7 +333,7 @@ def main():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     book = gspread.authorize(creds).open("YRA_Full_Feed_Master")
 
-    sheets = [book.sheet1]
+    sheets = [sheet_tabs.product_sheet(book)]
     for name in EXTRA_TABS:
         try:
             extra = book.worksheet(name)
