@@ -107,6 +107,29 @@ def report_tab(ws, now):
     for k, v in sc.most_common(10):
         print(f"   {v:5d}  {k}")
 
+    print("age by EXACT sheet stock (live+in-stock rows only count towards risk):")
+    by_stock = {}
+    for r in with_url:
+        k = r["stock"] if r["stock"] is not None else -1
+        k = k if k <= 5 else (6 if k <= 10 else 11)
+        by_stock.setdefault(k, []).append(r)
+    for k in sorted(by_stock):
+        rs = by_stock[k]
+        ages = sorted(r["age"] if r["age"] is not None else 9999 for r in rs)
+        label = {-1: "blank", 6: "6-10", 11: ">10"}.get(k, str(k))
+        pct = lambda q: ages[min(len(ages) - 1, int(q * len(ages)))]
+        print(f"   stock {label:>5s}: n={len(rs):5d}  p50={pct(.5):6.1f}h p90={pct(.9):6.1f}h max={ages[-1]:6.1f}h "
+              f"live={sum(1 for r in rs if r['created'] == 'TRUE'):5d}")
+
+    # per-row export for offline simulation of rotation strategies
+    with open(f"stale_rows_{title}.csv", "w", newline="", encoding="utf-8") as f:
+        import csv
+        w = csv.writer(f)
+        w.writerow(["tab", "row", "sku", "stock", "status", "created", "age_h", "sync"])
+        for r in rows:
+            w.writerow([title, r["row"], r["sku"], r["stock"] if r["stock"] is not None else "",
+                        r["status"], r["created"], "" if r["age"] is None else f"{r['age']:.2f}", r["sync"][:40]])
+
     print("OLDEST 25 rows:")
     oldest = sorted(with_url, key=lambda r: (-(r["age"] if r["age"] is not None else 10 ** 9)))[:25]
     for r in oldest:
