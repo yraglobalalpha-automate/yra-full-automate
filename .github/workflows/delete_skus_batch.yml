@@ -1,0 +1,53 @@
+name: Delete SKUs (batched, explicit list)
+
+# Deletes the listings of an explicit SKU file from OnBuy in batched requests
+# (delete_listings_batch.py). dry_run=yes (default) only counts. Holds the
+# onbuy-api group - dispatch when it is idle.
+
+on:
+  workflow_dispatch:
+    inputs:
+      list_file:
+        description: "Repo path: SKUs exactly as OnBuy holds them (one per line)"
+        required: true
+      dry_run:
+        description: "yes = count only; no = delete"
+        required: false
+        default: "yes"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Delete
+        env:
+          DELETE_SKUS_FILE: ${{ inputs.list_file }}
+          DRY_INPUT: ${{ inputs.dry_run }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: |
+          if [ "$DRY_INPUT" = "no" ]; then export DRY_RUN=0; else export DRY_RUN=1; fi
+          python delete_listings_batch.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: delete-results
+          path: delete_results.csv
