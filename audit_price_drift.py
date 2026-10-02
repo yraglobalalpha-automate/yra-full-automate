@@ -162,6 +162,13 @@ def main():
     for sku, sp, lp, ss, ls, upd, tab, rn in over[:10]:
         log.info("  %s [%s row %d]: sheet %.2f vs LIVE %.2f updated_at=%s", sku, tab, rn, sp, lp, upd)
     log.info("price OK but stock drifted: %d", len(stock_off))
+    # The dangerous class (2026-10-02, wrong order YRA SKU 175117835194): the sheet says 0 and OnBuy still
+    # sells it. The oversell guard re-zeroes these inside every sync/backfill - this nightly count is its
+    # report card (it should read 0); each line shows when OnBuy last touched the listing.
+    risky = [t for t in under + over + stock_off + under_def if t[3] == 0 and t[4] > 0]
+    log.info("SELLABLE ON ONBUY BUT SHEET SAYS OUT OF STOCK: %d", len(risky))
+    for sku, sp, lp, ss, ls, upd, tab, rn in risky[:40]:
+        log.info("  RISK %s [%s row %d]: sheet stock 0 vs LIVE stock %d, price %.2f, updated_at=%s", sku, tab, rn, ls, lp, upd)
 
     if not FIX:
         log.info("REPORT ONLY - set FIX=1 to push the sheet's price/stock onto the drifted listings")
