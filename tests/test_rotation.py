@@ -87,6 +87,20 @@ def test_steady_state_has_bounded_staleness():
     assert worst < 9, f"a row went {worst}h without a check at 40% capacity"
 
 
+def test_reference_time_ignores_a_small_manual_run():
+    last_batch_end = datetime(2026, 10, 2, 0, 0)
+    stamps = [last_batch_end - timedelta(minutes=i) for i in range(300)]   # the real batch
+    smoke = [last_batch_end + timedelta(hours=5)] * 3                      # 3 rows a manual run touched
+    assert rotation.reference_time(stamps + smoke) <= last_batch_end
+    assert rotation.reference_time(stamps) == last_batch_end - timedelta(minutes=99)
+
+
+def test_reference_time_small_sheets_and_empty():
+    t1, t2 = datetime(2026, 10, 2, 9), datetime(2026, 10, 2, 3)
+    assert rotation.reference_time([t1, t2]) == t2          # fewer rows than `skip`: the oldest stamp
+    assert rotation.reference_time([]) is None
+
+
 def test_rows_without_a_sku_are_split_out_of_the_batch():
     rows = [{"SKU": "123"}, {"SKU": ""}, {"SKU": "  "}, {}, {"SKU": 456}, {"SKU": None}]
     kept, dropped = rotation.split_no_sku(list(enumerate(rows)))

@@ -82,6 +82,23 @@ def rotation_order(processable, now, parse_time, max_age_hours=None):
     return [t[2] for t in scored]
 
 
+def reference_time(stamps, skip=100):
+    """When the previous REAL batch ended, for sizing the next one: the
+    `skip`-th newest Last Checked Time (None when there are no stamps).
+
+    The batch is sized from the time since the last run, measured on the
+    sheet itself. Using the single newest stamp let any small manual or
+    targeted run (a Run-button click, a rows= repair, a smoke test) reset
+    that clock, so the next scheduled run - perhaps six hours after the last
+    real batch - sized itself for the few minutes since the manual one and
+    left most of the day's eBay allowance unspent. A run that touched fewer
+    than `skip` rows is now invisible; every real batch is larger."""
+    ordered = sorted(stamps, reverse=True)
+    if not ordered:
+        return None
+    return ordered[min(len(ordered), skip) - 1]
+
+
 def split_no_sku(processable):
     """([(idx, row)] that have a SKU, [(idx, row)] that do not).
 

@@ -1050,8 +1050,10 @@ def main():
         # the day's spend tracks the budget whatever the cadence.
         MAX_PRODUCTS_PER_RUN = max(1, EBAY_DAILY_CALL_BUDGET // RUNS_PER_DAY)
         try:
-            _newest = max((parse_time(r.get("Last Checked Time", "")) for r in data),
-                          default=None)
+            # The 100th-newest stamp, not the newest (rotation.reference_time): a
+            # small manual/targeted run must not reset the clock, or the next
+            # scheduled batch shrinks to the few minutes since it.
+            _newest = rotation.reference_time(parse_time(r.get("Last Checked Time", "")) for r in data)
             if _newest is not None:
                 # Last Checked Time cells are naive PK wall clock - compare naive to naive
                 _now_pk = datetime.now(PK_TZ).replace(tzinfo=None)
