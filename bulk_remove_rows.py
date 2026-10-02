@@ -212,6 +212,32 @@ def main():
         print(f"     held: {r['tab']} row {r['row']} SKU {r['sku']} stock {r['stock']} created {r['created']} - {why}")
     print(f"\nlisted SKUs not on the sheet (OnBuy may still hold them): {len(absent)}")
 
+    # Rows the sync FLAGGED as duplicates and that are live, but that the fresh
+    # link groups do not call duplicates (their original row has since been
+    # deleted or moved, so the old "...on row N" flag is stale): kept.
+    groups = {}
+    for r in rows:
+        if r["ident"]:
+            groups.setdefault(r["ident"], []).append(r)
+    held_keys = {(h["tab"], h["row"]) for h, _w in held}
+    flagged = [r for r in rows if r["created"] and r["sync"].startswith(("Failed: supplier link already used", "Failed: ASIN"))]
+    kept_flagged = [r for r in flagged if (r["tab"], r["row"]) not in removed_keys and (r["tab"], r["row"]) not in held_keys]
+    fc = {"it is now the FIRST row of its supplier product (the original is gone)": 0,
+          "alone on its supplier link": 0, "no supplier id on the link": 0, "other": 0}
+    for r in kept_flagged:
+        g = groups.get(r["ident"], []) if r["ident"] else None
+        k = ("no supplier id on the link" if g is None else "alone on its supplier link" if len(g) < 2
+             else "it is now the FIRST row of its supplier product (the original is gone)" if g[0] is r else "other")
+        fc[k] += 1
+    print(f"\nFLAGGED as duplicate by the sync, live, but NOT removed: {len(kept_flagged)} (of {len(flagged)} flagged live)")
+    for k, n in fc.items():
+        if n:
+            print(f"  {n:5d}  {k}")
+    for r in kept_flagged[:12]:
+        g = groups.get(r["ident"], [])
+        print(f"     kept: {r['tab']} row {r['row']} SKU {r['sku']} stock {r['stock']} | group of {len(g)}: "
+              + ", ".join(f"{x['tab']} {x['row']}{'*' if x is r else ''}" for x in g[:5]))
+
     onbuy_list = sorted({r["sku"] for r in remove} | set(absent))
     with open("onbuy_delete_list.txt", "w", encoding="utf-8") as fh:
         fh.write("\n".join(onbuy_list) + "\n")
