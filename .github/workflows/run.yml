@@ -82,6 +82,9 @@ jobs:
           # category (fees.py); unset/anything else keeps the flat 20%.
           FEE_MODE: ${{ vars.FEE_MODE }}
           FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
+          # eBay's delivery fee in the cost base and the Shipping Cost (£) cell (user 2026-10-02): '1' = on, 'shadow' =
+          # measure and log only (nothing written or repriced), '0' = off. A repo variable of the same name overrides.
+          EBAY_SHIPPING_COST: ${{ vars.EBAY_SHIPPING_COST || 'shadow' }}
           MAX_PRODUCTS_PER_RUN: ${{ vars.MAX_PRODUCTS_PER_RUN }}
           REFRESH_ALL: ${{ inputs.refresh_all }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

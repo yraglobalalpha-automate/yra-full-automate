@@ -61,6 +61,19 @@ def test_typed_number_is_an_override():
     assert resolve_pct_cell("12.5", [15.0], "15") == 12.5
 
 
+def test_cell_within_half_a_point_of_the_mirrors_whole_number_is_the_automations_own():
+    # 2026-10-02: the sheet shows the effective fee to two decimals (nominal + the 1.5-point uplift = 16.50), the
+    # mirror stores a WHOLE number (16, or 17 when float noise tips the rounding) - that is not an override.
+    assert resolve_pct_cell("16.50", [15.0], "16") is None
+    assert resolve_pct_cell("16.50", [15.0], "17") is None
+    assert resolve_pct_cell("13.47", [15.0, 8.0], "13") is None          # a tiered category's blend
+    assert resolve_pct_cell("17.50", [20.0], "18", hi=500) is None       # a fractional profit band
+    # a person's number further away than that is still an override
+    assert resolve_pct_cell("17.60", [15.0], "16") == 17.6
+    assert resolve_pct_cell("12", [15.0], "16") == 12.0
+    assert resolve_pct_cell("16.50", [15.0], None) == 16.5               # no mirror, no auto match: nothing to recognise it by
+
+
 def test_override_beyond_sanity_is_ignored():
     assert resolve_pct_cell("250", [15.0], "15") is None          # fee cap
     assert resolve_pct_cell("250", [40.0], "40", hi=500) == 250.0  # profit ok
