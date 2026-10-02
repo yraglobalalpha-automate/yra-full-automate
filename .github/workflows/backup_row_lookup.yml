@@ -1,0 +1,32 @@
+name: Backup Row Lookup (read-only)
+
+# Reads the Google Sheet only. Outside the onbuy-api group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      skus:
+        description: "Comma-separated SKUs"
+        required: true
+      backup_tab:
+        description: "Backup tab name"
+        required: false
+        default: "Removed 2026-10-02"
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Look up
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SKUS: ${{ inputs.skus }}
+          BACKUP_TAB: ${{ inputs.backup_tab }}
+        run: python backup_row_lookup.py
