@@ -1,0 +1,36 @@
+name: List Check (read-only)
+
+# Reads the Google Sheet only; writes CSV artifacts. Outside the onbuy-api
+# group - safe alongside any run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      list_file:
+        description: "Repo path: SKUs to check (one per line)"
+        required: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Check the list against the sheet
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          LIST_FILE: ${{ inputs.list_file }}
+        run: python list_check.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: list-check
+          path: |
+            list_check.csv
+            list_check_not_listed_live_dups.csv
+            list_check_absent.txt
