@@ -114,7 +114,8 @@ def main():
             tabs.append(amz)
     except gspread.exceptions.WorksheetNotFound:
         pass
-    print(f"sheet {SHEET_NAME!r} | top band profit {pricing.TOP_BAND_PROFIT:g}% | fee mode "
+    top = getattr(pricing, "TOP_BAND_PROFIT", None)             # only stores on the temporary top band have it
+    print(f"sheet {SHEET_NAME!r} | top band profit {f'{top:g}%' if top is not None else 'standing schedule'} | fee mode "
           f"{'category' if fees.enabled() else 'flat'}")
 
     pool = []
