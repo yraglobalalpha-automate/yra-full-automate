@@ -219,6 +219,22 @@ def main():
     for r in rows:
         if r["ident"]:
             groups.setdefault(r["ident"], []).append(r)
+    # What state are the KEEPERS (the rows that stay) in?
+    kc = {}
+    for r in remove:
+        if r["reason"].startswith("live duplicate"):
+            k = groups[r["ident"]][0]
+            cls = ("keeper Synced" if k["sync"].startswith("Synced")
+                   else "keeper awaiting/pending" if k["sync"].startswith(("Awaiting", "Pending"))
+                   else "keeper frozen/failed" if k["sync"].startswith(("Failed", "BRAND", "Skipped"))
+                   else "keeper blank/other status")
+            kc[cls] = kc.get(cls, 0) + 1
+            sk = "keeper in stock" if (k["stock"] or 0) > 0 else "keeper out of stock"
+            kc[sk] = kc.get(sk, 0) + 1
+            if cls != "keeper Synced" and kc[cls] <= 5:
+                print(f"     keeper check: {r['tab']} row {r['row']} SKU {r['sku']} - original {k['tab']} row {k['row']} "
+                      f"status {k['sync'][:70]!r} stock {k['stock']} created {k['created']}")
+    print("\nkeepers of the duplicates being removed:", kc)
     held_keys = {(h["tab"], h["row"]) for h, _w in held}
     flagged = [r for r in rows if r["created"] and r["sync"].startswith(("Failed: supplier link already used", "Failed: ASIN"))]
     kept_flagged = [r for r in flagged if (r["tab"], r["row"]) not in removed_keys and (r["tab"], r["row"]) not in held_keys]
