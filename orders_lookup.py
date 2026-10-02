@@ -18,7 +18,7 @@ MAX_PAGES = int(os.getenv("MAX_PAGES") or "30")
 SAFE_ORDER_KEYS = ("order_id", "id", "status", "order_status", "date", "created", "created_at", "order_date",
                    "modified", "updated_at", "date_modified", "total", "currency", "currency_code", "site_id",
                    "delivery_service", "dispatched_at", "cancelled_at", "refunded_at")
-SAFE_PRODUCT_KEYS = ("sku", "name", "opc", "quantity", "unit_price", "price", "status", "product_name",
+SAFE_PRODUCT_KEYS = ("sku", "name", "opc", "quantity", "unit_price", "price", "status", "product_name", "expected_dispatch_date", "expected_delivery_date", "condition",
                      "product_listing_id", "dispatched_at")
 
 
