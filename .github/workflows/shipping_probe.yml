@@ -1,0 +1,34 @@
+name: Shipping Probe (read-only)
+
+# Reads the sheet and asks eBay (the sync's own item call, a small random sample) what delivery
+# costs; prints how the Shipping Cost (£) column is filled and what adding eBay's delivery fee
+# to the cost base would do to prices. Aggregates only; writes nothing; never touches OnBuy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: "How many in-stock eBay-tab rows to ask eBay about (0 = the sheet counts only)"
+        required: false
+        default: "60"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Probe
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          FEE_MODE: ${{ vars.FEE_MODE }}
+          FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
+          SAMPLE: ${{ inputs.sample }}
+        run: python shipping_probe.py

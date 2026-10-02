@@ -1,0 +1,37 @@
+name: Pricing Probe (read-only)
+
+# Reads the sheet and the Supabase mirror; prints how Fee % / Profit % cells are
+# interpreted for the given rows (prices only, no costs). Writes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tab:
+        description: "Worksheet (empty = first product tab)"
+        required: false
+        default: ""
+      rows:
+        description: "Sheet rows, e.g. 6294,6298 or 10-20 - or: all (whole-tab count of Fee % cells read as overrides)"
+        required: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Probe
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FEE_MODE: ${{ vars.FEE_MODE }}
+          FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
+          SHEET_TAB: ${{ inputs.tab }}
+          ROWS: ${{ inputs.rows }}
+        run: python pricing_probe.py
