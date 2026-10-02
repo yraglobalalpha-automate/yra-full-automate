@@ -90,7 +90,8 @@ def main():
                 oldest = t
             skus = {str(d.get("sku")).strip() for d in walk(o) if d.get("sku") is not None}
             if os.getenv("LIST_ALL"):
-                print(f"ORDER-LINE {o.get('order_id')} | {o.get('status')} | {o.get('date')} | SKUs {sorted(skus)}")
+                _due = sorted({str(d.get("expected_dispatch_date")) for d in walk(o) if d.get("expected_dispatch_date")})
+                print(f"ORDER-LINE {o.get('order_id')} | {o.get('status')} | {o.get('date')} | SKUs {sorted(skus)} | dispatch by {_due}")
             if SKU in skus or SKU.lstrip("0") in {s.lstrip("0") for s in skus}:
                 hits += 1
                 print("---- ORDER CONTAINING THE SKU")
