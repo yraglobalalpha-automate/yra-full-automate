@@ -207,11 +207,14 @@ def run(book, onbuy, dry_run=None):
                 err = answered.get(s, "no answer")
                 if err:
                     stats["bounced"] += 1
-                    errors[err[:60]] = errors.get(err[:60], 0) + 1
+                    errors.setdefault(err[:60], []).append(s)
                 else:
                     stats["pushed"] += 1
-        _say(f"re-zeroed {stats['pushed']} listing(s) in {stats['requests']} PUT request(s) "
-             f"(0 GET, 0 auth); {stats['bounced']} bounced {errors if errors else ''}".strip())
+        _say(f"re-zeroed {stats['pushed']} listing(s) in {stats['requests']} PUT request(s) (0 GET, 0 auth); "
+             f"{stats['bounced']} bounced")
+        for err, skus in errors.items():
+            # "SKU does not exist" = the sheet says live but OnBuy has no such listing: nothing to oversell.
+            _say(f"  bounced '{err}': {len(skus)} e.g. {', '.join(skus[:6])}")
     except Exception as exc:  # noqa: BLE001 - the guard must never cost its host run anything
         _say(f"skipped this pass ({type(exc).__name__}: {str(exc)[:160]})")
         stats["skipped"] = "error"
