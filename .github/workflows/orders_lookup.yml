@@ -1,0 +1,42 @@
+name: Orders Lookup (read-only)
+
+# Reads OnBuy orders (newest first) and prints only the orders that contain
+# one SKU - order id, status, dates, product lines; never buyer details.
+# Shares the API token with the sync, so it queues in the onbuy-api group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sku:
+        description: "SKU to find in recent orders"
+        required: true
+      days:
+        description: "How many days back to look"
+        required: false
+        default: "14"
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Look up
+        env:
+          SKU: ${{ inputs.sku }}
+          DAYS: ${{ inputs.days }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: python orders_lookup.py
