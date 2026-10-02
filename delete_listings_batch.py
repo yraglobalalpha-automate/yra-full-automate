@@ -57,6 +57,13 @@ def parse_results(body):
     return out
 
 
+def write_results(outcomes):
+    with open("delete_results.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["sku", "outcome"])
+        w.writerows(sorted(outcomes.items()))
+
+
 def send(onbuy, wire_skus):
     """One DELETE request; waits out the hourly cap and retries server errors.
     Returns (status code, parsed body or None, text)."""
@@ -125,6 +132,12 @@ def main():
             if size > 1:
                 size, shrunk = max(1, size // 4), True
                 log.warning("batch not answered per SKU (HTTP %s: %s) - shrinking to %d", status, text[:160], size)
+                if size == 1:
+                    # One SKU per request is OnBuy's 240-an-hour cap: hours of holding the API.
+                    # Stop here - the listings still live are in the results file for bulk_delete_chain.
+                    write_results(outcomes)
+                    raise SystemExit("OnBuy does not answer batched deletes per SKU - stopped before single-SKU mode; "
+                                     "use bulk_delete_chain with the remaining SKUs")
                 continue
             outcomes[chunk[0]] = f"error: {text[:100]}"
             idx += 1
@@ -155,10 +168,7 @@ def main():
         k = o if o in ("ok", "gone", "suspended") else "other error"
         tally[k] = tally.get(k, 0) + 1
     log.info("DONE in %d request(s): %s", requests_sent, ", ".join(f"{v} {k}" for k, v in sorted(tally.items())))
-    with open("delete_results.csv", "w", newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh)
-        w.writerow(["sku", "outcome"])
-        w.writerows(sorted(outcomes.items()))
+    write_results(outcomes)
     for s, o in outcomes.items():
         if o == "suspended":
             log.info("SUSPENDED (needs OnBuy): %s", s)

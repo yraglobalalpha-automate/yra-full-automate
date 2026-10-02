@@ -83,6 +83,9 @@ def plan(rows, listed_skus, include_live_dups=True, approved_dup_skus=None):
                 elif not keeper["created"]:
                     held.append((dup, "its original row is not live - this copy is the only live listing"))
                     continue
+                elif _in_stock(dup) and not _in_stock(keeper):
+                    held.append((dup, "its original row shows no stock but this copy does - the data disagree"))
+                    continue
                 remove[key(dup)] = dict(dup, reason=f"live duplicate of {keeper['tab']} row {keeper['row']}")
 
     return {"remove": sorted(remove.values(), key=lambda r: (r["tab"], r["row"])),

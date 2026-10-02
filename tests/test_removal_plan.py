@@ -63,6 +63,15 @@ def test_duplicate_is_held_when_its_keeper_is_not_live():
     assert out["remove"] == [] and "not live" in out["held"][0][1]
 
 
+def test_duplicate_in_stock_is_held_when_the_surviving_original_shows_no_stock():
+    rows = [row("Sheet1", 2, "111", "ebay:1", stock=0), row("Sheet1", 9, "222", "ebay:1", stock=5)]
+    out = removal_plan.plan(rows, [], True)
+    assert out["remove"] == [] and "disagree" in out["held"][0][1]
+    # both out of stock: the copy may go
+    rows2 = [row("Sheet1", 2, "111", "ebay:1", stock=0), row("Sheet1", 9, "222", "ebay:1", stock=0)]
+    assert names(removal_plan.plan(rows2, [], True)["remove"]) == [("Sheet1", 9)]
+
+
 def test_keeper_removed_as_listed_keeps_an_in_stock_copy_but_not_an_out_of_stock_one():
     keeper = row("Sheet1", 2, "111", "ebay:1", stock=0)
     in_stock_copy = row("Sheet1", 9, "222", "ebay:1", stock=5)
