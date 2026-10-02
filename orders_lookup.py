@@ -87,6 +87,8 @@ def main():
             if t and (oldest is None or t < oldest):
                 oldest = t
             skus = {str(d.get("sku")).strip() for d in walk(o) if d.get("sku") is not None}
+            if os.getenv("LIST_ALL"):
+                print(f"ORDER-LINE {o.get('order_id')} | {o.get('status')} | {o.get('date')} | SKUs {sorted(skus)}")
             if SKU in skus or SKU.lstrip("0") in {s.lstrip("0") for s in skus}:
                 hits += 1
                 print("---- ORDER CONTAINING THE SKU")
