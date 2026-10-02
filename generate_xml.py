@@ -14,6 +14,7 @@ import json
 import requests
 from oauth2client.service_account import ServiceAccountCredentials
 
+import oversell_guard
 import rotation
 import sheet_tabs
 
@@ -1526,6 +1527,16 @@ def main():
                 logger.error("OOS sheet update failed: %s", exc)
         if oos_done or oos_bounced:
             logger.info("OOS pass: %d zeroed on OnBuy, %d bounced", oos_done, oos_bounced)
+
+    # ================= OVERSELL GUARD (2026-10-02) =================
+    # The OOS pass above only re-zeroes rows whose last push predates their last
+    # check: a push that bounced was stamped as done, and stock raised on OnBuy
+    # afterwards stayed sellable until the nightly audit (wrong order, SKU
+    # 175117835194). This pass re-sends stock 0 for EVERY live row the sheet says
+    # is out of stock - one batched PUT, no GET, no extra auth (oversell_guard.py);
+    # it never raises and counts against the push budget like any other batch.
+    if ONBUY_API_PUSH_ENABLED and onbuy_ready and onbuy_halt_reason is None and not rows_ranges:
+        onbuy_pushes_this_run += oversell_guard.run(spreadsheet, onbuy).get("requests", 0)
 
     # ================= ACTIVATION PASS (2026-08-11) =================
     # OnBuy support confirmed: product-create ignores embedded price/stock

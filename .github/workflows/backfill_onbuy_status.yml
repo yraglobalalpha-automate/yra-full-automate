@@ -45,6 +45,9 @@ jobs:
           # Reconciler alerts (refusals, big zero/delete batches) need mail settings;
           # DELIST_ALLOW_MASS=1 (repo variable) lets a deliberate mass cleanup through.
           DELIST_ALLOW_MASS: ${{ vars.DELIST_ALLOW_MASS }}
+          # Oversell guard (oversell_guard.py) honours the store's push switch; OVERSELL_GUARD=0 is its kill switch.
+          ONBUY_API_PUSH_ENABLED: ${{ vars.ONBUY_API_PUSH_ENABLED }}
+          OVERSELL_GUARD: ${{ vars.OVERSELL_GUARD }}
           SMTP_HOST: ${{ vars.SMTP_HOST }}
           SMTP_PORT: ${{ vars.SMTP_PORT }}
           ALERT_EMAIL_FROM: ${{ vars.ALERT_EMAIL_FROM }}

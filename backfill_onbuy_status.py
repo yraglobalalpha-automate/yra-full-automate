@@ -325,6 +325,12 @@ def _reconcile_deletions(book, onbuy=None):
         deletion_reconciler.run(book, onbuy)
     except Exception as exc:  # noqa: BLE001 - never break the backfill
         print(f"deletion reconciler failed (backfill unaffected): {exc}")
+    # Oversell guard (2026-10-02): every hourly pass also re-sends stock 0 for
+    # each live row the sheet says is out of stock - one batched PUT on the
+    # client this run already holds (no extra auth, no GET). Never raises.
+    if onbuy is not None:
+        import oversell_guard
+        oversell_guard.run(book, onbuy)
 
 
 def main():

@@ -1,0 +1,59 @@
+name: Oversell Guard (manual run)
+
+# The guard itself runs INSIDE every sync and every hourly backfill (no extra
+# scheduled run, no extra auth, no GET calls - see oversell_guard.py). This
+# manual workflow exists for a dry run or an on-demand pass; it is NOT
+# scheduled so it adds no contender for the onbuy-api group's single pending slot.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "yes = report only; no = re-zero for real"
+        required: false
+        default: "yes"
+      probe_headers:
+        description: "yes = also make ONE read-only GET and print OnBuy's rate-limit headers"
+        required: false
+        default: "no"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Oversell guard
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+          ONBUY_API_PUSH_ENABLED: ${{ vars.ONBUY_API_PUSH_ENABLED }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          ALERT_EMAIL_FROM: ${{ vars.ALERT_EMAIL_FROM }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          DRY_INPUT: ${{ inputs.dry_run }}
+          PROBE_INPUT: ${{ inputs.probe_headers }}
+        run: |
+          if [ "$DRY_INPUT" = "no" ]; then export GUARD_DRY_RUN=0; else export GUARD_DRY_RUN=1; fi
+          if [ "$PROBE_INPUT" = "yes" ]; then export GUARD_PROBE=1; fi
+          python oversell_guard.py
