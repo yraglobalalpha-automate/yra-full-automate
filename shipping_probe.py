@@ -15,6 +15,7 @@ repositories, and so their run logs, are public). Writes nothing anywhere.
 import json
 import os
 import random
+import re
 import statistics
 import time
 
@@ -128,7 +129,7 @@ def main():
             nrows += 1
             k = classify_cell(cell(r, ix, "Shipping Cost (£)"))
             counts[k] = counts.get(k, 0) + 1
-            if (ws.title == tabs[0].title and "/itm/" in cell(r, ix, "Supplier URL")
+            if (ws.title == tabs[0].title and re.search(r"/itm/(\d+)", cell(r, ix, "Supplier URL"))
                     and _to_float(cell(r, ix, "Cost Price (£)")) > 0
                     and _to_float(cell(r, ix, "Stock")) > 0):
                 pool.append({"row": n, "url": cell(r, ix, "Supplier URL"), "cost": _to_float(cell(r, ix, "Cost Price (£)")),
@@ -154,8 +155,7 @@ def main():
     cells_vs_ebay = {"cell blank": 0, "cell = eBay": 0, "cell differs": 0}
     sync_view, ctx_gain = {"free": 0, "paid": 0, "not stated": 0}, 0
     for s in sample:
-        m = s["url"].split("/itm/")[1]
-        item_id = "".join(ch for ch in m if ch.isdigit())
+        item_id = re.search(r"/itm/(\d+)", s["url"]).group(1)         # the digits right after /itm/, as the sync reads them
         try:
             how, item = fetch(item_id, token, ctx=False)
         except requests.RequestException as exc:

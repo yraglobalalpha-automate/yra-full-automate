@@ -90,6 +90,7 @@ def main():
                 print(f"mirror read failed for a chunk ({str(exc)[:100]}) - those rows are previewed without it")
         how, misread, fee_ovr, profit_ovr, down, up, human = {}, 0, 0, 0, [], [], 0
         priced = 0
+        fee_vals, profit_vals = {}, {}
         for n, r in sku_rows:
             c = cells_of(r)
             d = decision(c, mirror.get(c("SKU"), {}), amazon)
@@ -100,6 +101,10 @@ def main():
             misread += bool(d["misread"])
             fee_ovr += d["fee_override"] is not None
             profit_ovr += d["profit_override"] is not None
+            if d["fee_override"] is not None:
+                fee_vals[d["fee_override"]] = fee_vals.get(d["fee_override"], 0) + 1
+            if d["profit_override"] is not None:
+                profit_vals[d["profit_override"]] = profit_vals.get(d["profit_override"], 0) + 1
             if d["existing"] > 0:
                 change = (d["selling_price"] / d["existing"] - 1) * 100
                 if change < -0.05:
@@ -110,6 +115,9 @@ def main():
                     human += 1
         print(f"rows with a cost: {priced} | decisions {how} | prices set under the Fee % misread: {misread}")
         print(f"cells that still read as a MANUAL override: Fee % {fee_ovr}, Profit % {profit_ovr}")
+        for label, vals in (("Fee %", fee_vals), ("Profit %", profit_vals)):
+            top = sorted(vals.items(), key=lambda kv: -kv[1])[:10]
+            print(f"  most common typed {label} values (value: rows): {dict(top)}")
         print(f"prices kept ABOVE the formula (taken as set by a person): {human}")
         if down:
             print(f"prices that move DOWN: {len(down)} | mean {statistics.mean(down):.2f}%, median {statistics.median(down):.2f}%, "
