@@ -38,8 +38,11 @@ ELIGIBLE_PREFIXES = ("Synced", "Pending Approval", "Awaiting OnBuy go-live")
 FROZEN_PREFIXES = ("Failed", "BRAND BLOCKED")
 CHUNK = 500                      # SKUs per PUT request (OnBuy accepts up to 1,000)
 MIN_PRICE = float(os.getenv("GUARD_MIN_PRICE") or "1.00")   # below OnBuy's minimum a push can suspend the listing
-BREAKER_MIN = int(os.getenv("GUARD_BREAKER_MIN") or "400")
-BREAKER_FRACTION = float(os.getenv("GUARD_BREAKER_FRACTION") or "0.35")
+# A broken sheet read looks like "nearly everything is out of stock" - and fails the Stock/Status
+# agreement check first. OpenMaal legitimately has 54% of its catalogue at stock 0 (2026-10-02), so
+# the breaker only trips for a huge count that is also nearly the whole catalogue.
+BREAKER_MIN = int(os.getenv("GUARD_BREAKER_MIN") or "1000")
+BREAKER_FRACTION = float(os.getenv("GUARD_BREAKER_FRACTION") or "0.80")
 MAX_SECONDS = float(os.getenv("GUARD_MAX_SECONDS") or "90")
 
 

@@ -64,8 +64,9 @@ def test_rows_without_a_usable_price_are_skipped_not_given_a_placeholder():
 # ------------------------------------------------------------------- breaker
 def test_breaker_trips_only_when_out_of_stock_looks_like_a_broken_read():
     assert not g.tripped(300, 6000)                      # a normal day
-    assert not g.tripped(390, 800)                       # under the absolute floor
-    assert g.tripped(2400, 6000)                         # 40% of the catalogue
+    assert not g.tripped(990, 1000)                      # near-total but under the absolute floor
+    assert not g.tripped(2375, 4395)                     # OpenMaal's real 54%: a market, not a broken read
+    assert g.tripped(5000, 6000)                         # 83% of a big catalogue
     assert not g.tripped(10, 0)                          # no created flags at all: never trips on nothing
 
 
