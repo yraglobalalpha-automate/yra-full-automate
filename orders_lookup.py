@@ -56,6 +56,8 @@ def main():
     offset = 0
     for page in range(MAX_PAGES):
         params = {"site_id": onbuy.site_id, "limit": 100, "offset": offset, "sort[created]": "desc"}
+        if os.getenv("STATUS"):
+            params["filter[status]"] = os.getenv("STATUS")
         resp = onbuy._send("GET", f"{BASE_URL}/orders", what="orders page", params=params, timeout=90)
         if resp.status_code == 429:
             print("rate limited - waiting 90s")
