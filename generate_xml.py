@@ -1657,6 +1657,16 @@ def main():
     if skipped_incomplete:
         logger.info("Skipping %d row(s) with no eBay/Amazon Supplier URL yet (not counted against this run's batch)", skipped_incomplete)
 
+    # A row with a Supplier URL but no SKU is only skipped by the main loop AFTER
+    # its supplier fetch and never gets a Last Checked Time, so it kept the oldest
+    # slot of every batch and cost one eBay call per run (Arden 2026-10-01: 182 such
+    # rows = 23% of every batch; under the age-based rotation they would rank first
+    # for ever). The SKU is entered by hand - they wait outside the batch until it is.
+    processable, _no_sku = rotation.split_no_sku(processable)
+    if _no_sku:
+        logger.warning("%d row(s) have a Supplier URL but no SKU yet (sheet rows %s) - left out of the batch until a SKU is added",
+                       len(_no_sku), ", ".join(str(idx + 2) for idx, _r in _no_sku[:10]) + (", ..." if len(_no_sku) > 10 else ""))
+
     # A supplier link that belongs on the OTHER tab must not stall this
     # lane: run.yml (the eBay lane) carries no Keepa key, so an Amazon
     # link pasted onto the eBay tab aborted the WHOLE eBay sync at the

@@ -87,6 +87,13 @@ def test_steady_state_has_bounded_staleness():
     assert worst < 9, f"a row went {worst}h without a check at 40% capacity"
 
 
+def test_rows_without_a_sku_are_split_out_of_the_batch():
+    rows = [{"SKU": "123"}, {"SKU": ""}, {"SKU": "  "}, {}, {"SKU": 456}, {"SKU": None}]
+    kept, dropped = rotation.split_no_sku(list(enumerate(rows)))
+    assert [i for i, _r in kept] == [0, 4]
+    assert [i for i, _r in dropped] == [1, 2, 3, 5]
+
+
 def test_describe_counts():
     items = list(enumerate([row(3, 1), row(0, 1), row(5, 1, sync="BRAND BLOCKED (x)", created="")]))
     assert rotation.describe(items) == (1, 1, 1)

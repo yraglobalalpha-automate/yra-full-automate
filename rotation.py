@@ -82,6 +82,21 @@ def rotation_order(processable, now, parse_time, max_age_hours=None):
     return [t[2] for t in scored]
 
 
+def split_no_sku(processable):
+    """([(idx, row)] that have a SKU, [(idx, row)] that do not).
+
+    The sync loop skips a row with no SKU only AFTER fetching it from the
+    supplier and never stamps its Last Checked Time, so such a row kept the
+    oldest slot of every batch and cost an eBay call per run (Arden
+    2026-10-01: 182 rows = 23% of each batch). Under an age-based order it
+    would rank first for ever. The SKU is entered by hand, so these rows wait
+    outside the batch until one is."""
+    kept, dropped = [], []
+    for item in processable:
+        (kept if str(item[1].get("SKU") or "").strip() else dropped).append(item)
+    return kept, dropped
+
+
 def describe(processable):
     """Counts for the run log: (live in stock, out of stock, waiting on a human)."""
     live_in_stock = sum(1 for _i, r in processable if is_live(r) and sheet_stock(r) > 0)
