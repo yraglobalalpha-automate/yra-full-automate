@@ -97,6 +97,7 @@ def main():
                         print(f"  {k}: {o[k]}")
                 for d in walk(o):
                     if d.get("sku") is not None and str(d.get("sku")).strip().lstrip("0") == SKU.lstrip("0"):
+                        print("  product line keys:", sorted(d.keys()))
                         for k in SAFE_PRODUCT_KEYS:
                             if k in d and not isinstance(d[k], (dict, list)):
                                 print(f"  product.{k}: {d[k]}")

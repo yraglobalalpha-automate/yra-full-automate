@@ -132,6 +132,21 @@ def main():
         print(f"  RISK {sku} {s['tab']} row {s['row']} | live stock {l['stock']} price {l['price']} | "
               f"sheet checked {s['checked']} (~{age} ago) pushed {s['pushed']} | OnBuy updated {l['updated']} | {s['sync']}")
 
+    # Who has been WRITING to the listings? updated_at by hour (UTC) and the busiest minutes - a burst that
+    # matches no workflow run is an outside writer (a dashboard/CSV upload).
+    hours, minutes = {}, {}
+    for l in live.values():
+        u = l["updated"]
+        if u and (now - u).total_seconds() < 72 * 3600:
+            hours[u.strftime("%m-%d %H")] = hours.get(u.strftime("%m-%d %H"), 0) + 1
+            minutes[u.strftime("%m-%d %H:%M")] = minutes.get(u.strftime("%m-%d %H:%M"), 0) + 1
+    print("\nlisting updated_at by hour (UTC), last 72h:")
+    print("  " + "  ".join(f"{h}:{n}" for h, n in sorted(hours.items())))
+    print("busiest minutes (>=40 listings):")
+    for m, n in sorted(minutes.items()):
+        if n >= 40:
+            print(f"  {m} UTC: {n}")
+
     with open("oos_live_check.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["class", "sku", "tab", "row", "sheet_stock", "live_stock", "sheet_checked_pk", "last_onbuy_sync_pk",
