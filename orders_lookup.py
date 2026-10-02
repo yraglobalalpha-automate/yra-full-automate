@@ -92,6 +92,9 @@ def main():
             if SKU in skus or SKU.lstrip("0") in {s.lstrip("0") for s in skus}:
                 hits += 1
                 print("---- ORDER CONTAINING THE SKU")
+                _paid = ", ".join(k for k in ("paypal_capture_id", "stripe_transaction_id") if o.get(k))
+                print("  paid via (which payment id is set):", _paid or "(neither)")
+                print("  dispatched flag:", o.get("dispatched"), "| shipped_at:", o.get("shipped_at"))
                 for k in SAFE_ORDER_KEYS:
                     if k in o and not isinstance(o[k], (dict, list)):
                         print(f"  {k}: {o[k]}")
