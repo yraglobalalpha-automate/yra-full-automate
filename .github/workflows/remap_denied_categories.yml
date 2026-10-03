@@ -1,0 +1,30 @@
+name: Remap Denied Categories
+
+# Sheet-only (no OnBuy, no Supabase): rows stuck on a category OnBuy refuses as "not a lowest level category"
+# (category_denylist.txt) get the right leaf in their Category cell; their Failed status stays so the create
+# fallback re-submits them on the next visit. Dry run by default.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "yes = print the plan only; no = write the Category cells"
+        required: false
+        default: "yes"
+
+jobs:
+  remap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Remap
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+        run: python remap_denied_categories.py

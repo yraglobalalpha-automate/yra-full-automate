@@ -137,6 +137,22 @@ def _load_protected_skus():
 
 PROTECTED_SKUS = _load_protected_skus()
 
+
+def load_category_denylist(path=None):
+    """Category ids OnBuy refuses as "not a lowest level category" although its API flags them listable
+    (category_denylist.txt: one id per line, # comments; found 2026-10-03: 38213 and 38188). Never raises."""
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_denylist.txt")
+    ids = set()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                token = line.split("#", 1)[0].strip()
+                if token:
+                    ids.add(token)
+    except FileNotFoundError:
+        pass
+    return ids
+
 # How many eBay fetch failures (after retries) in one run before we email an alert.
 FETCH_FAILURE_ALERT_THRESHOLD = 3
 
@@ -1266,11 +1282,14 @@ def main():
     # ================= CATEGORY FILE =================
     onbuy_categories = []
     category_id_by_path = {}
+    denied_category_ids = load_category_denylist()
 
     with open("onbuy_categories_only.csv", newline="", encoding="utf-8") as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
             category = row.get("OnBuy Category Path")
+            if str(row.get("Category ID") or "").strip() in denied_category_ids:
+                continue   # OnBuy refuses it as "not a lowest level category" whatever its can_list_in flag says
             if category:
                 onbuy_categories.append(category)
                 try:

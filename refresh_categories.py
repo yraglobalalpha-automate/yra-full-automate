@@ -114,6 +114,17 @@ def main():
     print(f"kept {len(old_dept)} old-department + {len(novel)} novel new-department leaves; "
           f"{len(listable) - len(deduped)} parallel copies/duplicate paths dropped -> {len(deduped)}")
     listable = deduped
+    # Ids OnBuy refuses as "not a lowest level category" although it flags them listable (category_denylist.txt).
+    denied = set()
+    try:
+        with io.open(os.path.join(os.path.dirname(CSV_PATH), "category_denylist.txt"), encoding="utf-8") as fh:
+            denied = {line.split("#", 1)[0].strip() for line in fh if line.split("#", 1)[0].strip()}
+    except FileNotFoundError:
+        pass
+    held_back = {k: v for k, v in listable.items() if k in denied}
+    if held_back:
+        print(f"held back by category_denylist.txt: {held_back}")
+    listable = {k: v for k, v in listable.items() if k not in denied}
     gone = {k: v for k, v in old.items() if k not in listable}
     new_ids = {k: v for k, v in listable.items() if k not in old}
     renamed = {k: (old[k], listable[k]) for k in listable if k in old and old[k] != listable[k]}

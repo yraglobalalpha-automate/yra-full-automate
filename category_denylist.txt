@@ -1,0 +1,7 @@
+# Category ids OnBuy refuses as "Category 'N' is not a lowest level category" although GET /v2/categories
+# flags them can_list_in=true. The pipeline never picks them (generate_xml.py skips them when it loads
+# onbuy_categories_only.csv; refresh_categories.py never writes them back). One id per line, # comments.
+#
+# 2026-10-03: container-like nodes of the new departments; 34 GTV + 16 Arden creates failed on 38213, 1 GTV on 38188.
+38213   # Mobile Phones > Toys > Children's Scooters & Ride-On Toys   (use Toys & Games > Toys > Children's Scooters & Ride-On Toys > Children's Scooters, id 2338)
+38188   # Home, Office & Outdoor > Cars & Automotive > In-Car Entertainment & Electronics
