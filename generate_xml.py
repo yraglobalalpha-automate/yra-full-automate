@@ -912,6 +912,11 @@ def _fetch_item_group_as_item(item_group_id, token):
         params={"item_group_id": item_group_id},
         timeout=20,
     )
+    if resp.status_code == 404:
+        # "The specified item group was not found" (errorId 11002): the multi-variation listing is gone - the same
+        # real answer a plain item gets with a 404 (the caller reports it as removed), not a fetch failure. As a
+        # failure it left the row's stale stock live and ended every sync red.
+        return None
     raise_for_status(resp, what=f"ebay item group {item_group_id}")
     group_data = resp.json()
 

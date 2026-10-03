@@ -41,20 +41,25 @@ def item(options, **extra):
 
 @pytest.fixture
 def fetch(monkeypatch):
-    def run(first, status=200, group=None):
+    def run(first, status=200, group=None, group_status=200):
         calls = []
 
         def fake_get(url, headers=None, params=None, timeout=None):
             calls.append(url.rsplit("/", 1)[-1])
             if url.endswith("get_item_by_legacy_id"):
                 return FakeResponse(status, first)
-            return FakeResponse(200, group or {})
+            return FakeResponse(group_status, group or {})
 
         monkeypatch.setattr(gx.requests, "get", fake_get)
         monkeypatch.setattr(gx, "validate_images", lambda urls, max_images=10: [u for u in urls if u][:max_images])
         available, data = gx.get_ebay_data(URL, "token")
         return available, data, calls
     return run
+
+
+@pytest.fixture
+def fetch_group_gone(fetch):
+    return lambda first, gone: fetch(first, status=400, group=gone, group_status=404)
 
 
 def test_free_delivery_is_a_zero_quote_from_the_one_call_the_sync_already_makes(fetch):
@@ -91,3 +96,14 @@ def test_an_unavailable_item_carries_no_quote(fetch):
     gone = item([option("3.99")], estimatedAvailabilities=[{"estimatedAvailabilityStatus": "OUT_OF_STOCK"}])
     available, data, _ = fetch(gone)
     assert available is False and data.get("shipping_cost") is None
+
+
+def test_a_vanished_multi_variation_listing_is_reported_removed_not_as_a_failed_fetch(fetch_group_gone):
+    # eBay: 404 "The specified item group was not found" (errorId 11002) - the listing is gone. It used to raise, so the
+    # row kept its stale stock live and every sync ended red (Makstore row 2173, Arden row 5021).
+    body = {"errors": [{"errorId": gx.ITEM_GROUP_ERROR_ID}]}
+    gone = {"errors": [{"errorId": 11002, "message": "The specified item group was not found."}]}
+    available, data, calls = fetch_group_gone(body, gone)
+    assert available is False and not data.get("stock")
+    assert calls == ["get_item_by_legacy_id", "get_items_by_item_group"]
+
