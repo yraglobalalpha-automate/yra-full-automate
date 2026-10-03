@@ -1,0 +1,29 @@
+name: Category Error Scan (read-only)
+
+# Reads the Google Sheet and the committed category file only (no OnBuy, no Supabase, no writes anywhere):
+# which rows OnBuy refused as "Category 'N' is not a lowest level category", per category id.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Scan
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: python category_error_scan.py
+      - name: Upload the row list
+        uses: actions/upload-artifact@v4
+        with:
+          name: category-error-rows
+          path: out/
+          if-no-files-found: error
