@@ -10,6 +10,7 @@ public). Writes nothing anywhere.
 """
 import json
 import os
+import re
 import statistics
 
 os.environ.setdefault("FEE_MODE", "category")
@@ -193,6 +194,9 @@ def main():
         if d is None:
             print(f"row {n} SKU {sku}: no cost - nothing to price")
             continue
+        item = re.search(r"/itm/(\d+)", c("Supplier URL")) or re.search(r"/dp/([A-Z0-9]{10})", c("Supplier URL"))
+        ratio = f"{d['cost'] / d['prev_cost']:.2f}" if d["prev_cost"] > 0 else "n/a"
+        print(f"  supplier item {item.group(1) if item else '?'} | cost now / cost the mirror saw: {ratio} | title: {c('Title')[:70]!r}")
         print(f"row {n} SKU {sku}: cells Fee % {c('Fee %')!r} Profit % {c('Profit %')!r} | mirror Fee % {mirror.get('Fee %')!r} "
               f"Profit % {mirror.get('Profit %')!r} | rule {d['rule']!r} | read as: fee override {d['fee_override']}, "
               f"profit override {d['profit_override']} | decision {d['how']}"
