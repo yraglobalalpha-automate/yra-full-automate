@@ -87,7 +87,7 @@ def main():
         pass
 
     total, written, unmatched = 0, 0, []
-    per_rule = {}
+    per_rule, states = {}, {}
     for ws in tabs:
         values = with_retry(lambda ws=ws: ws.get_all_values(), what=f"read {ws.title}", max_attempts=3)
         header = [str(h).strip() for h in values[0]]
@@ -112,6 +112,9 @@ def main():
                 continue
             plan.append((n, cell(r, "SKU"), cell(r, "Category"), target))
             per_rule[(cid, target[0])] = per_rule.get((cid, target[0]), 0) + 1
+            state = (ws.title, cell(r, "Sync Status")[:42] or "(blank)",
+                     "has OPC" if cell(r, "OPC").upper() not in ("", "PENDING") else "no OPC")
+            states[state] = states.get(state, 0) + 1
         total += len(plan)
         print(f"tab {ws.title!r}: {len(plan)} row(s) to remap")
         if not plan or DRY_RUN:
@@ -132,6 +135,7 @@ def main():
             with_retry(lambda: ws.batch_update([dict(u) for u in updates]), what="category write", max_attempts=3)
             written += len(updates)
     print(f"\nrows to remap: {total} | by (denied id, replacement id): {per_rule}")
+    print("what state those rows are in (tab, Sync Status, OPC): " + str(dict(sorted(states.items(), key=lambda kv: -kv[1]))))
     print(f"written: {written}" if not DRY_RUN else "DRY RUN - nothing written")
     if unmatched:
         print(f"{len(unmatched)} row(s) no rule matches (left alone):")
