@@ -24,7 +24,8 @@ import pricing  # noqa: E402
 
 SRC = ROOT / "generate_xml.py"
 NAMES = ("_to_float", "_formula_priced", "_pct_value", "resolve_pct_cell", "_fee_cell_auto_values",
-         "_misread_fee_priced", "decide_price", "_shipping_value", "ebay_shipping_cost", "_quantile")
+         "_misread_fee_priced", "decide_price", "_shipping_value", "ebay_shipping_cost", "_quantile",
+         "shipping_cell_update")
 
 
 def _load():
@@ -313,6 +314,9 @@ def _opt(value, currency="GBP", **kw):
     ({"shippingOptions": [_opt("5.00", "USD"), _opt("3.00")]}, 3.0),                   # another currency is ignored
     ({"shippingOptions": [_opt("5.00", "USD")]}, None),
     ({"shippingOptions": [{"shippingCostType": "CALCULATED"}]}, None),                 # eBay gave no figure
+    ({"shippingOptions": [_opt("2.00", shippingCostType="CALCULATED")]}, None),        # a postcode-dependent figure is not "exact"
+    ({"shippingOptions": [_opt("2.00", shippingCostType="CALCULATED"), _opt("4.00")]}, 4.0),   # only the written fee counts
+    ({"shippingOptions": [{"shippingCost": {"value": "2.50", "currency": "GBP"}}]}, 2.5),      # type not stated: the figure is taken
     ({"shippingOptions": []}, None),
     ({}, None), (None, None),
     ({"shippingOptions": [_opt("-1.00")]}, None),
@@ -323,6 +327,18 @@ def _opt(value, currency="GBP", **kw):
 def test_ebay_shipping_cost(item, expected):
     got = NS["ebay_shipping_cost"](item)
     assert got == expected if expected is None else got == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("quote,current,expected", [
+    (3.99, None, 3.99), (3.99, "", 3.99), (3.99, "free", 3.99), (3.99, 0, 3.99),            # a stated fee is written
+    (3.99, "3.99", None), (3.99, 3.99, None), (3.99, "£3.99", None),                       # ...once: a steady row costs no edit
+    (3.99, "2.50", 3.99), (3.99, "abc", 3.99),                                               # the fee changed / text in the cell
+    (0.0, None, None), (0.0, "", None), (0.0, "free", None), (0.0, "FREE", None), (0.0, "0", None),   # free: a blank cell stays blank
+    (0.0, "3.99", "free"), (0.0, 3.99, "free"),                                              # ...but an earlier fee is cleared to "free"
+    (None, "3.99", None), (None, "", None),                                                  # no exact quote never touches the cell
+])
+def test_shipping_cell_update(quote, current, expected):
+    assert NS["shipping_cell_update"](quote, current) == expected
 
 
 def test_quantile():

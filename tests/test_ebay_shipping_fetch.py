@@ -78,7 +78,8 @@ def test_the_cheapest_delivered_option_wins(fetch):
     assert data["shipping_cost"] == pytest.approx(2.95)
 
 
-@pytest.mark.parametrize("options", [None, [], [{"shippingCostType": "CALCULATED"}], [option("4.00", "USD")]])
+@pytest.mark.parametrize("options", [None, [], [{"shippingCostType": "CALCULATED"}], [option("4.00", "USD")],
+                                     [option("3.00", shippingCostType="CALCULATED")]])
 def test_no_usable_quote_is_none_not_zero(fetch, options):
     available, data, _ = fetch(item(options))
     assert available is True and data["shipping_cost"] is None          # never "free" by default

@@ -522,12 +522,26 @@ def _shipping_value(cell):
     return value if 0 < value < 1000 else 0.0      # negative, NaN, infinity or absurd = none
 
 
+def shipping_cell_update(quote, current):
+    """What to write into a row's Shipping Cost (£) cell for eBay's quote, or None to leave the cell alone (user
+    2026-10-03: the delivery cost is for the items whose eBay link states an exact fee, "not for all"). A stated fee
+    is written as a number; FREE delivery writes nothing into a blank cell - a cell still holding an earlier fee
+    becomes "free" so the cost base stops carrying it; no exact quote (None) never touches the cell."""
+    if quote is None:
+        return None
+    now = _shipping_value(current)
+    if quote == 0:
+        return "free" if now > 0 else None
+    return quote if abs(now - quote) >= 0.005 else None
+
+
 def ebay_shipping_cost(item):
-    """What eBay quotes to deliver this item to a UK buyer, from the item the
-    sync already fetched (shippingOptions - no extra API call): the cheapest
-    delivered option's fee in GBP, 0.0 for free delivery, None when eBay gave
-    no usable cost (no options, a calculated fee it would not price, another
-    currency). Collection in person is not delivery and is skipped."""
+    """What eBay's listing states to deliver this item to a UK buyer, from the
+    item the sync already fetched (shippingOptions - no extra API call): the
+    cheapest delivered option's EXACT fee in GBP, 0.0 for free delivery, None
+    when eBay gave no exact figure (no options, a CALCULATED fee that depends
+    on the buyer's postcode, another currency). Collection in person is not
+    delivery and is skipped."""
     best = None
     for opt in (item or {}).get("shippingOptions") or []:
         if not isinstance(opt, dict):
@@ -535,6 +549,9 @@ def ebay_shipping_cost(item):
         kind = f"{opt.get('type') or ''} {opt.get('shippingServiceCode') or ''}".lower()
         if "pickup" in kind or "collect" in kind:
             continue
+        cost_type = str(opt.get("shippingCostType") or "").strip().upper()
+        if cost_type and cost_type != "FIXED":
+            continue                    # calculated for a postcode, not a figure written on the listing
         cost = opt.get("shippingCost") or {}
         if str(cost.get("currency") or "GBP").upper() != "GBP":
             continue
@@ -2282,8 +2299,10 @@ def main():
         # (tested); this block feeds it the row's cells and acts on it.
         # Delivery cost (user 2026-10-02): an eBay row's cost base includes what
         # eBay charges to deliver the item - taken from the item fetch above (no
-        # extra API call) and written into the Shipping Cost (£) cell as the fee,
-        # or "free". When eBay gave no cost (no options, a calculated fee, a
+        # extra API call) and written into the Shipping Cost (£) cell - but only
+        # for items whose eBay link states an exact fee (user 2026-10-03: "not for
+        # all"); free delivery writes nothing into a blank cell (shipping_cell_update).
+        # When eBay gave no exact cost (no options, a calculated fee, a
         # non-GBP amount), the item is unavailable, the row is an Amazon one or
         # EBAY_SHIPPING_COST=0, the cell stays as it is and its own number
         # counts (blank, "free" or any text = 0). In "shadow" mode the quote is
@@ -2756,19 +2775,14 @@ def main():
         if "Profit %" in col_map and profit_override is None and _band_now is not None:
             row_updates.append({"range": f"{col_letter(col_map['Profit %'])}{i}",
                                 "values": [[f"{(_band_now or 0):.2f}"]]})
-        # eBay's delivery quote goes into the Shipping Cost (£) cell: the fee, or "free" (only when it differs
-        # from what the cell already says, so a steady row costs no extra edit; shadow mode only counts it).
-        if _quote is not None:
-            _ship_now = str(row.get("Shipping Cost (£)") if row.get("Shipping Cost (£)") is not None else "").strip().lower()
-            if _quote == 0:
-                _ship_ok = _ship_now == "free"
-            else:
-                _ship_ok = _ship_now not in ("", "free") and abs(_shipping_value(_ship_now) - _quote) < 0.005
-            if not _ship_ok:
-                ship_cells_changed += 1
-                if EBAY_SHIPPING_COST:
-                    row_updates.append({"range": f"{col_letter(col_map['Shipping Cost (£)'])}{i}",
-                                        "values": [["free" if _quote == 0 else _quote]]})
+        # eBay's stated delivery fee goes into the Shipping Cost (£) cell (shipping_cell_update decides: a number for
+        # a stated fee, nothing for free delivery on a blank cell; shadow mode only counts it).
+        _ship_write = shipping_cell_update(_quote, row.get("Shipping Cost (£)"))
+        if _ship_write is not None:
+            ship_cells_changed += 1
+            if EBAY_SHIPPING_COST:
+                row_updates.append({"range": f"{col_letter(col_map['Shipping Cost (£)'])}{i}",
+                                    "values": [[_ship_write]]})
         if "Condition" in col_map:
             row_updates.append({"range": f"{col_letter(col_map['Condition'])}{i}",
                                 "values": [[ebay_data.get("condition") or "New"]]})
