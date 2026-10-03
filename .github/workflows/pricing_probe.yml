@@ -13,6 +13,10 @@ on:
       rows:
         description: "Sheet rows, e.g. 6294,6298 or 10-20 - or: all (whole-tab count of Fee % cells read as overrides)"
         required: true
+      list_up:
+        description: "yes = also print the sheet rows whose price would rise by more than 5% (feed for a targeted sync run)"
+        required: false
+        default: ""
 
 jobs:
   probe:
@@ -34,4 +38,5 @@ jobs:
           FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
           SHEET_TAB: ${{ inputs.tab }}
           ROWS: ${{ inputs.rows }}
+          LIST_UP: ${{ inputs.list_up }}
         run: python pricing_probe.py

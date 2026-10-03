@@ -130,6 +130,49 @@ def _select_param(columns):
     return ",".join(c if re.fullmatch(r"[A-Za-z0-9_]+", c) else f'"{c}"' for c in columns)
 
 
+# SKUs per mirror request. A whole run's batch in ONE `in.(...)` URL (1,448-2,275 SKUs on the Amazon tabs, 1,000+
+# on a big eBay run) came back 400 Bad Request - and PostgREST caps a response at 1,000 rows anyway - so those runs
+# priced and exported with NO mirror: every stale Fee % / Profit % cell then read as a manual override and the
+# tracking columns fell back to defaults (found 2026-10-03).
+PREFETCH_CHUNK = 150
+
+
+def _fetch_rows_chunked(select, skus, what):
+    """{sku: row} for whichever of the SKUs have a Supabase row, PREFETCH_CHUNK SKUs per request. Never raises: a
+    chunk that fails is logged and its SKUs simply come back without mirror data (what a failed prefetch always
+    meant - safe, if not perfectly up to date)."""
+    skus = [s for s in skus if s]
+    if not skus:
+        return {}
+
+    supabase_url = os.getenv("SUPABASE_URL")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+    if not supabase_url or not service_key:
+        return {}
+
+    endpoint = f"{supabase_url.rstrip('/')}/rest/v1/{TABLE_NAME}"
+    headers = {"apikey": service_key, "Authorization": f"Bearer {service_key}"}
+    found = {}
+    for start in range(0, len(skus), PREFETCH_CHUNK):
+        chunk = skus[start:start + PREFETCH_CHUNK]
+        params = {"select": select, "SKU": f"in.({','.join(chunk)})"}
+        try:
+            resp = requests.get(endpoint, headers=headers, params=params, timeout=30)
+        except requests.exceptions.RequestException as exc:
+            logger.error("%s failed: %s", what, exc)
+            continue
+
+        if resp.status_code != 200:
+            logger.error("%s failed (%s): %s", what, resp.status_code, resp.text[:300])
+            continue
+
+        try:
+            found.update({row["SKU"]: row for row in resp.json()})
+        except (ValueError, KeyError, TypeError) as exc:
+            logger.error("%s: unexpected response shape: %s", what, exc)
+    return found
+
+
 def fetch_existing_fields(skus):
     """Returns {sku: {column: value}} for whichever of these SKUs already
     have a Supabase row, covering OPC and the OnBuy-tracking columns.
@@ -148,33 +191,8 @@ def fetch_existing_fields(skus):
     failure, which just means every row falls back to defaults this run
     (safe, if not perfectly up to date).
     """
-    if not skus:
-        return {}
-
-    supabase_url = os.getenv("SUPABASE_URL")
-    service_key = os.getenv("SUPABASE_SERVICE_KEY")
-    if not supabase_url or not service_key:
-        return {}
-
-    endpoint = f"{supabase_url.rstrip('/')}/rest/v1/{TABLE_NAME}"
-    headers = {"apikey": service_key, "Authorization": f"Bearer {service_key}"}
-    params = {"select": _select_param(("SKU",) + TRACKING_COLUMNS), "SKU": f"in.({','.join(skus)})"}
-
-    try:
-        resp = requests.get(endpoint, headers=headers, params=params, timeout=30)
-    except requests.exceptions.RequestException as exc:
-        logger.error("Fetching existing Supabase fields failed: %s", exc)
-        return {}
-
-    if resp.status_code != 200:
-        logger.error("Fetching existing Supabase fields failed (%s): %s", resp.status_code, resp.text[:300])
-        return {}
-
-    try:
-        return {row["SKU"]: row for row in resp.json()}
-    except (ValueError, KeyError, TypeError) as exc:
-        logger.error("Fetching existing Supabase fields: unexpected response shape: %s", exc)
-        return {}
+    return _fetch_rows_chunked(_select_param(("SKU",) + TRACKING_COLUMNS), skus,
+                               "Fetching existing Supabase fields")
 
 
 def fetch_full_rows(skus):
@@ -186,33 +204,7 @@ def fetch_full_rows(skus):
     NOT NULL problem described in fetch_existing_fields(). Never raises -
     returns {} on any failure.
     """
-    if not skus:
-        return {}
-
-    supabase_url = os.getenv("SUPABASE_URL")
-    service_key = os.getenv("SUPABASE_SERVICE_KEY")
-    if not supabase_url or not service_key:
-        return {}
-
-    endpoint = f"{supabase_url.rstrip('/')}/rest/v1/{TABLE_NAME}"
-    headers = {"apikey": service_key, "Authorization": f"Bearer {service_key}"}
-    params = {"select": "*", "SKU": f"in.({','.join(skus)})"}
-
-    try:
-        resp = requests.get(endpoint, headers=headers, params=params, timeout=30)
-    except requests.exceptions.RequestException as exc:
-        logger.error("Fetching full Supabase rows failed: %s", exc)
-        return {}
-
-    if resp.status_code != 200:
-        logger.error("Fetching full Supabase rows failed (%s): %s", resp.status_code, resp.text[:300])
-        return {}
-
-    try:
-        return {row["SKU"]: row for row in resp.json()}
-    except (ValueError, KeyError, TypeError) as exc:
-        logger.error("Fetching full Supabase rows: unexpected response shape: %s", exc)
-        return {}
+    return _fetch_rows_chunked("*", skus, "Fetching full Supabase rows")
 
 
 def fetch_created_rows():

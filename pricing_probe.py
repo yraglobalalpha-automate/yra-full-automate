@@ -26,6 +26,7 @@ from generate_xml import _pct_value, _shipping_value, _to_float, decide_price  #
 SHEET_NAME = os.getenv("SHEET_NAME") or "YRA_Full_Feed_Master"
 TAB = (os.getenv("SHEET_TAB") or "").strip()
 ROWS = (os.getenv("ROWS") or "").strip()
+LIST_UP = (os.getenv("LIST_UP") or "").strip().lower() in ("1", "yes", "true")
 CHUNK = 150
 
 
@@ -122,7 +123,7 @@ def main():
         how, misread, fee_ovr, profit_ovr, down, up, human = {}, 0, 0, 0, [], [], 0
         priced = 0
         fee_vals, profit_vals = {}, {}
-        big = []
+        big, up_rows = [], []
         for n, r in sku_rows:
             c = cells_of(r)
             d = decision(c, mirror.get(c("SKU"), {}), amazon)
@@ -145,6 +146,8 @@ def main():
                     down.append(change)
                 elif change > 0.05:
                     up.append(change)
+                    if change > 5.0:
+                        up_rows.append(n)
                 if d["how"] == "kept" and d["existing"] > d["formula_price"] + 0.011:
                     human += 1
         print(f"rows with a cost: {priced} | decisions {how} | prices set under the Fee % misread: {misread}")
@@ -172,6 +175,8 @@ def main():
                 print(f"  row {n} SKU {sku}: price {d['existing']:.2f} -> {d['selling_price']:.2f} ({change:.1f}%) | decision {d['how']} | "
                       f"band now {d['band_now']} | cost ratio {ratio} | Fee % cell {d['fee_cell']!r} | rule {d['rule']!r} | "
                       f"matches: {matched(d)[:2]}")
+        if LIST_UP and up_rows:
+            print("ROWS THAT MOVE UP BY MORE THAN 5%: " + ",".join(str(n) for n in up_rows))
         if up:
             print(f"prices that move UP: {len(up)} | mean +{statistics.mean(up):.2f}%, median +{statistics.median(up):.2f}%, "
                   f"p90 +{pct(up, 0.9):.2f}%, max +{max(up):.2f}%")

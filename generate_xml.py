@@ -438,7 +438,14 @@ def decide_price(*, supplier, cost_price, shipping_cost, fee_rule, existing_pric
     band_prev = pricing.profit_percent(prev_total) if prev_total > 0 else None
     # 0 is the automation's own placeholder (it writes 0.00 for a row with no cost, and a restocked row still
     # shows it): never an intended price - read as a 0% override it priced rows at no profit at all.
-    profit_override = resolve_pct_cell(profit_cell, [band_now, band_prev, 0.0], prev.get("Profit %"), hi=500)
+    # A superseded schedule's profit for this cost is the automation's own too: a cell written under an older
+    # band (20 before the temporary 15, 40 before the 09-11 schedule) must not turn into a manual override just
+    # because the band moved and the mirror could not vouch for it (the mirror prefetch used to fail for big
+    # batches, so ~1,000 Amazon rows per store stuck at 20.00 while the band was 15).
+    old_bands = ((list(pricing.legacy_profit_percents(total_cost)) if cost_price > 0 else [])
+                 + (list(pricing.legacy_profit_percents(prev_total)) if prev_total > 0 else []))
+    profit_override = resolve_pct_cell(profit_cell, [band_now, band_prev, 0.0] + old_bands,
+                                       prev.get("Profit %"), hi=500)
     fee_override = resolve_pct_cell(fee_cell, _fee_cell_auto_values(fee_rule, existing_price), prev.get("Fee %"))
     profit_used = profit_override if profit_override is not None else (band_now or 0)
     if cost_price <= 0:

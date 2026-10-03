@@ -217,6 +217,31 @@ def test_the_sync_no_longer_writes_a_zero_profit_for_a_row_without_a_cost():
     assert 'if "Profit %" in col_map and profit_override is None and _band_now is not None:' in text
 
 
+# ---------------------------------------------------------------- 2026-10-03: superseded profits are the automation's own
+def test_a_profit_cell_written_under_a_superseded_schedule_is_not_an_override():
+    # With no mirror to vouch for it (the prefetch used to fail on big batches) a cell holding an OLD band's profit
+    # for this cost - the 20 written before the temporary 15, the 40 before the 09-11 schedule - is the automation's
+    # own: ~1,000 Amazon rows per store sat stuck at 20.00 while the band was 15.
+    cost = 80.0
+    legacy = legacy_of(cost, RULE15)
+    assert legacy, "an 80-pound cost has a superseded profit"
+    stale = legacy[0]
+    existing = pricing.price_for_profit(cost, stale, rule=RULE15)
+    d = decide(cost, RULE15, existing, shown(existing, RULE15), f"{stale:.2f}", prev={})
+    live = pricing.price_for_profit(cost, band_of(cost, RULE15), rule=RULE15)
+    assert d["profit_override"] is None
+    assert d["how"] == "follows" and d["selling_price"] == live < existing
+    amazon = decide(cost, RULE15, existing, shown(existing, RULE15), f"{stale:.2f}", supplier="Amazon", prev={})
+    assert amazon["profit_override"] is None and amazon["selling_price"] == live
+
+
+def test_a_number_no_schedule_ever_used_for_this_cost_is_still_an_override():
+    top = decide(80.0, RULE15, 0.0, "", "55", prev={})
+    assert top["profit_override"] == 55.0
+    mid = decide(20.0, RULE15, 0.0, "", "30", prev={})                 # the 10-50 range never moved
+    assert mid["profit_override"] == 30.0
+
+
 # ---------------------------------------------------------------- real overrides still win
 def test_a_typed_fee_override_still_drives_the_formula_and_is_kept():
     cost = 20.0
