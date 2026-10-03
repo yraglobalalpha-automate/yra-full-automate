@@ -389,6 +389,9 @@ def _fee_cell_auto_values(fee_rule, price):
     else:
         nominal = [float(pricing.PLATFORM_FEE_PERCENT)]
     values = nominal + [v + pricing.FEE_UPLIFT_PERCENT for v in nominal]
+    # ...and the flat fallback's own display (20 + the uplift): a row that was priced flat and categorised later
+    # still shows it, and nobody types 21.5 by hand.
+    values.append(float(pricing.PLATFORM_FEE_PERCENT) + pricing.FEE_UPLIFT_PERCENT)
     if price and price > 0:
         values.append(pricing.effective_fee_percent(price, fee_rule))
     return values
@@ -405,9 +408,13 @@ def _misread_fee_priced(price, cost, ship, fee_cell, profit_override=None):
     if price <= 0 or cost <= 0 or fee_cell is None:
         return False
     total = cost + ship
-    profits = [pricing.profit_percent(total)] + list(pricing.legacy_profit_percents(total))
+    # The profit that explains the price is the one the formula will use: the row's own override when it has
+    # one (a price set at the band's profit does not belong to a row whose cell now says something else - it
+    # would be dragged down to that cell's price), else the band's and the superseded schedules'.
     if profit_override is not None:
-        profits.append(profit_override)
+        profits = [profit_override]
+    else:
+        profits = [pricing.profit_percent(total)] + list(pricing.legacy_profit_percents(total))
     return any(abs(pricing.price_for_profit(total, p, platform_fee_percent=fee_cell) - price) < 0.011
                for p in profits)
 
@@ -429,7 +436,9 @@ def decide_price(*, supplier, cost_price, shipping_cost, fee_rule, existing_pric
     band_now = pricing.profit_percent(total_cost) if cost_price > 0 else None
     prev_total = prev_cost + prev_ship
     band_prev = pricing.profit_percent(prev_total) if prev_total > 0 else None
-    profit_override = resolve_pct_cell(profit_cell, [band_now, band_prev], prev.get("Profit %"), hi=500)
+    # 0 is the automation's own placeholder (it writes 0.00 for a row with no cost, and a restocked row still
+    # shows it): never an intended price - read as a 0% override it priced rows at no profit at all.
+    profit_override = resolve_pct_cell(profit_cell, [band_now, band_prev, 0.0], prev.get("Profit %"), hi=500)
     fee_override = resolve_pct_cell(fee_cell, _fee_cell_auto_values(fee_rule, existing_price), prev.get("Fee %"))
     profit_used = profit_override if profit_override is not None else (band_now or 0)
     if cost_price <= 0:
@@ -2713,7 +2722,7 @@ def main():
                                 + pricing.FEE_UPLIFT_PERCENT))
             row_updates.append({"range": f"{col_letter(col_map['Fee %'])}{i}",
                                 "values": [[f"{_fee_shown:.2f}"]]})
-        if "Profit %" in col_map and profit_override is None:
+        if "Profit %" in col_map and profit_override is None and _band_now is not None:
             row_updates.append({"range": f"{col_letter(col_map['Profit %'])}{i}",
                                 "values": [[f"{(_band_now or 0):.2f}"]]})
         # eBay's delivery quote goes into the Shipping Cost (£) cell: the fee, or "free" (only when it differs

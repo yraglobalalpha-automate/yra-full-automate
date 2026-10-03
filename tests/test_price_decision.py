@@ -163,6 +163,60 @@ def test_a_second_run_changes_nothing():
     assert second["selling_price"] == first["selling_price"] and second["how"] == "kept"
 
 
+# ---------------------------------------------------------------- the 2026-10-03 hotfix: stale 0.00 Profit % cells
+def test_a_stale_zero_profit_cell_is_the_automations_own_not_a_zero_profit_price():
+    # the sync writes 0.00 into Profit % for a row with no cost; a restocked row still shows it. Read as a 0%
+    # override it dragged misread prices down to the no-profit price (-18% .. -30%).
+    cost = 20.0
+    band = band_of(cost, RULE15)
+    inflated = pricing.price_for_profit(cost, band, platform_fee_percent=16.5)
+    d = decide(cost, RULE15, inflated, "16.50", "0.00", prev={"Cost Price (£)": cost, "Profit %": "40", "Fee %": "16"})
+    assert d["profit_override"] is None
+    assert d["how"] == "follows" and d["selling_price"] == pricing.price_for_profit(cost, band, rule=RULE15)
+    assert d["selling_price"] > 0.95 * inflated                              # only the ~1.8% fee correction
+
+
+def test_a_zero_profit_cell_never_prices_a_row_at_no_profit_on_the_amazon_tab_either():
+    cost = 20.0
+    d = decide(cost, RULE15, 21.0, shown(21.0, RULE15), "0", supplier="Amazon", prev={"Fee %": "16"})
+    assert d["profit_override"] is None
+    assert d["selling_price"] == pricing.price_for_profit(cost, band_of(cost, RULE15), rule=RULE15)
+
+
+def test_a_price_is_only_released_by_the_profit_that_explains_it():
+    # a row with a real profit override (20, below the band's 40): a price set at the BAND's profit is not explained
+    # by it, so it is not released down to the override's lower price - it stays as it was
+    cost = 20.0
+    band = band_of(cost, RULE15)
+    assert band > 20
+    at_band = pricing.price_for_profit(cost, band, platform_fee_percent=16.5)
+    kept = decide(cost, RULE15, at_band, "16.50", "20", prev={"Cost Price (£)": cost, "Profit %": "40", "Fee %": "16"})
+    assert kept["profit_override"] == 20.0 and kept["misread"] is False
+    assert kept["how"] == "kept" and kept["selling_price"] == at_band
+    # ...while a price set at the override's own profit follows the corrected fee down (no more than the fee effect)
+    at_override = pricing.price_for_profit(cost, 20, platform_fee_percent=16.5)
+    moved = decide(cost, RULE15, at_override, "16.50", "20", prev={"Cost Price (£)": cost, "Profit %": "40", "Fee %": "16"})
+    assert moved["misread"] is True and moved["how"] == "follows"
+    assert moved["selling_price"] == pricing.price_for_profit(cost, 20, rule=RULE15)
+    assert moved["selling_price"] > 0.97 * at_override
+
+
+def test_the_flat_fallback_display_on_a_categorised_row_is_not_an_override():
+    # priced flat (21.50 shown), categorised later: the cell keeps showing the flat display
+    cost = 20.0
+    band = band_of(cost, RULE15)
+    flat_price = pricing.price_for_profit(cost, band)
+    d = decide(cost, RULE15, flat_price, "21.50", prev={"Cost Price (£)": cost, "Fee %": "22"})
+    assert d["fee_override"] is None
+    d2 = decide(cost, RULE15, flat_price, "21.50", prev={})
+    assert d2["fee_override"] is None and d2["selling_price"] == pricing.price_for_profit(cost, band, rule=RULE15)
+
+
+def test_the_sync_no_longer_writes_a_zero_profit_for_a_row_without_a_cost():
+    text = SRC.read_text(encoding="utf-8")
+    assert 'if "Profit %" in col_map and profit_override is None and _band_now is not None:' in text
+
+
 # ---------------------------------------------------------------- real overrides still win
 def test_a_typed_fee_override_still_drives_the_formula_and_is_kept():
     cost = 20.0
