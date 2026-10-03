@@ -183,7 +183,16 @@ def main():
                   f"p90 +{pct(up, 0.9):.2f}%, max +{max(up):.2f}%")
         return
 
-    for n in parse_rows(ROWS):
+    if ROWS.lower().startswith("sku:"):
+        # sheet rows shift under the team's edits, so a row number from an old log can name another product:
+        # look the SKUs up instead (leading zeros ignored)
+        want = {x.strip().lstrip("0") or x.strip() for x in ROWS[4:].split(",") if x.strip()}
+        numbers = [n for n, r in enumerate(values[1:], start=2)
+                   if (cells_of(r)("SKU").lstrip("0") or cells_of(r)("SKU")) in want]
+        print(f"SKU lookup: {len(numbers)} of {len(want)} found on this tab")
+    else:
+        numbers = parse_rows(ROWS)
+    for n in numbers:
         if n - 1 >= len(values):
             continue
         r = values[n - 1]
