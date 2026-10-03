@@ -21,7 +21,7 @@ import fees  # noqa: E402
 import pricing  # noqa: E402
 import sheet_tabs  # noqa: E402
 import supabase_db  # noqa: E402
-from generate_xml import _shipping_value, _to_float, decide_price  # noqa: E402
+from generate_xml import _pct_value, _shipping_value, _to_float, decide_price  # noqa: E402
 
 SHEET_NAME = os.getenv("SHEET_NAME") or "YRA_Full_Feed_Master"
 TAB = (os.getenv("SHEET_TAB") or "").strip()
@@ -57,7 +57,38 @@ def decision(cells, mirror, amazon):
                      shipping_cost=_shipping_value(cells("Shipping Cost (£)")), fee_rule=rule,
                      existing_price=existing, fee_cell=cells("Fee %"), profit_cell=cells("Profit %"), prev=mirror)
     d["rule"], d["existing"] = rule, existing
+    d["cost"], d["ship"] = cost, _shipping_value(cells("Shipping Cost (£)"))
+    d["prev_cost"], d["prev_ship"] = _to_float(mirror.get("Cost Price (£)")), _to_float(mirror.get("Shipping Cost (£)"))
+    d["fee_cell"] = cells("Fee %")
     return d
+
+
+def band_of(total, rule):
+    fn = getattr(pricing, "profit_percent_for", None)              # GTV's band depends on the row's fee rule
+    return fn(total, rule=rule) if fn else pricing.profit_percent(total)
+
+
+def legacy_of(total, rule):
+    try:
+        return list(pricing.legacy_profit_percents(total, rule=rule))
+    except TypeError:
+        return list(pricing.legacy_profit_percents(total))
+
+
+def matched(d):
+    """Which formula the sheet's CURRENT price equals - (cost basis, profit %, fee reading) - for the big-mover breakdown."""
+    out = []
+    typed = _pct_value(d["fee_cell"])
+    for label, c, sh in (("now", d["cost"], d["ship"]), ("mirror", d["prev_cost"], d["prev_ship"])):
+        if c <= 0:
+            continue
+        t = c + sh
+        for p in [band_of(t, d["rule"])] + legacy_of(t, d["rule"]):
+            if typed is not None and abs(pricing.price_for_profit(t, p, platform_fee_percent=typed) - d["existing"]) < 0.011:
+                out.append(f"{label} cost, {p:g}% profit, misread fee")
+            if abs(pricing.price_for_profit(t, p, rule=d["rule"]) - d["existing"]) < 0.011:
+                out.append(f"{label} cost, {p:g}% profit, category rule")
+    return out or ["no formula matches"]
 
 
 def main():
@@ -91,6 +122,7 @@ def main():
         how, misread, fee_ovr, profit_ovr, down, up, human = {}, 0, 0, 0, [], [], 0
         priced = 0
         fee_vals, profit_vals = {}, {}
+        big = []
         for n, r in sku_rows:
             c = cells_of(r)
             d = decision(c, mirror.get(c("SKU"), {}), amazon)
@@ -107,6 +139,8 @@ def main():
                 profit_vals[d["profit_override"]] = profit_vals.get(d["profit_override"], 0) + 1
             if d["existing"] > 0:
                 change = (d["selling_price"] / d["existing"] - 1) * 100
+                if change < -8.0:
+                    big.append((n, c("SKU"), d, change))
                 if change < -0.05:
                     down.append(change)
                 elif change > 0.05:
@@ -122,6 +156,22 @@ def main():
         if down:
             print(f"prices that move DOWN: {len(down)} | mean {statistics.mean(down):.2f}%, median {statistics.median(down):.2f}%, "
                   f"p10 {pct(down, 0.1):.2f}%, min {min(down):.2f}%")
+        if big:
+            labels, ratios = {}, []
+            for _, _, d, _ in big:
+                for lab in matched(d)[:2]:
+                    labels[lab] = labels.get(lab, 0) + 1
+                if d["prev_cost"] > 0:
+                    ratios.append(d["cost"] / d["prev_cost"])
+            print(f"BIG DROPS (more than 8% down): {len(big)} | the price equals: {dict(sorted(labels.items(), key=lambda kv: -kv[1])[:8])}")
+            if ratios:
+                print(f"  cost now / cost the mirror saw: min {min(ratios):.2f}, median {statistics.median(ratios):.2f}, "
+                      f"max {max(ratios):.2f} (over {len(ratios)} rows with a mirror cost)")
+            for n, sku, d, change in sorted(big, key=lambda b: b[3])[:8]:
+                ratio = f"{d['cost'] / d['prev_cost']:.2f}" if d["prev_cost"] > 0 else "no mirror cost"
+                print(f"  row {n} SKU {sku}: price {d['existing']:.2f} -> {d['selling_price']:.2f} ({change:.1f}%) | decision {d['how']} | "
+                      f"band now {d['band_now']} | cost ratio {ratio} | Fee % cell {d['fee_cell']!r} | rule {d['rule']!r} | "
+                      f"matches: {matched(d)[:2]}")
         if up:
             print(f"prices that move UP: {len(up)} | mean +{statistics.mean(up):.2f}%, median +{statistics.median(up):.2f}%, "
                   f"p90 +{pct(up, 0.9):.2f}%, max +{max(up):.2f}%")
