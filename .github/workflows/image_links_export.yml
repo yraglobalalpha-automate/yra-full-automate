@@ -1,0 +1,35 @@
+name: Image Links Export (read-only)
+
+# Reads the Google Sheet only (no OnBuy, no Supabase, no writes anywhere) and uploads the picture data for a SKU
+# list as an artifact - the OPC + image links OnBuy asks for when a product page is stuck loading.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sku_file:
+        description: "Repo path of a text file with one SKU per line"
+        required: false
+        default: "cleanup/image_ticket_skus_2026-10-03.txt"
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Export
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SKU_FILE: ${{ inputs.sku_file }}
+        run: python image_links_export.py
+      - name: Upload the files
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-links
+          path: out/
+          if-no-files-found: error
