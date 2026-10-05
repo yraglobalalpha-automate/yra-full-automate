@@ -7,8 +7,8 @@ Two sources, both plain text files next to the code (one SKU per line, '#' start
                          so the price/stock audit that runs after it knows them too (the file only ever exists in the CI workspace).
 
 Why: the nightly price/stock FIX pushed the sheet's stock back onto every drifted listing, so the stock the zero step had taken off
-a wrong-content listing came straight back the next night, and the listing sold (YRA 993578879973: a wrong order on 2026-08-23, a
-second one on 2026-10-03). The audit now never pushes the sheet's price/stock onto a held listing and takes any stock it still shows off.
+a wrong-content listing came straight back the next night, and the listing sold (wrong-item orders on 2026-08-23 and 2026-10-03).
+The audit now never pushes the sheet's price/stock onto a held listing and takes any stock it still shows off.
 """
 import os
 

@@ -134,8 +134,8 @@ def main():
     log.info("sheet rows with SKU: %d | live listings: %d", len(sheet), len(live))
 
     # Listings that show ANOTHER product (hold_at_zero_skus.txt + what tonight's zero step found) never get the sheet's price/stock:
-    # they are held at stock 0 (2026-10-05: YRA 993578879973 was re-stocked by this very audit after the zero step and sold - a wrong
-    # order). held_zero = those still showing stock; `live` no longer contains any held listing.
+    # they are held at stock 0 (2026-10-05: such a listing was re-stocked by this very audit after the zero step and sold - a
+    # wrong-item order). held_zero = those still showing stock; `live` no longer contains any held listing.
     held_zero, live = held_skus.split_held(live, sheet, held_skus.held_set())
     log.info("HELD at stock 0 (OnBuy shows another product): %d still showing stock", len(held_zero))
     for sku, price, ls, tab, rn in held_zero[:40]:

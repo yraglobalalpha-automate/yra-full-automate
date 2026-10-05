@@ -29,8 +29,8 @@ log = logging.getLogger(__name__)
 
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
 ZERO_SKUS = {s.strip() for s in (os.getenv("ZERO_SKUS") or "").split(",") if s.strip()}
-# Only the named SKUs (2026-10-05): a listing the name check cannot flag (YRA 993578879973 shares its brand and half its words
-# with the product it wrongly shows) is zeroed without touching any other mismatched listing.
+# Only the named SKUs (2026-10-05): a listing the name check cannot flag (same brand and half the same words as the product it
+# wrongly shows) is zeroed without touching any other mismatched listing.
 ZERO_ONLY_LISTED = (os.getenv("ZERO_ONLY_LISTED") or "").strip().lower() in ("1", "yes", "true")
 
 

@@ -9,9 +9,9 @@ import held_skus
 
 def test_load_skus_strips_comments_blanks_and_keeps_both_zero_forms(tmp_path):
     f = tmp_path / "hold_at_zero_skus.txt"
-    f.write_text("# header comment\n993578879973  # XGODY Mini 4K\n\n0134203578940\n   \n", encoding="utf-8")
+    f.write_text("# header comment\n123456789012  # some product\n\n0134203578940\n   \n", encoding="utf-8")
     got = held_skus.load_skus(str(f))
-    assert got == {"993578879973", "0134203578940", "134203578940"}
+    assert got == {"123456789012", "0134203578940", "134203578940"}
 
 
 def test_a_missing_file_is_empty_not_an_error(tmp_path):

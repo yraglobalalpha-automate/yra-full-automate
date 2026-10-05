@@ -80,13 +80,13 @@ def _run_zero(monkeypatch, zero_skus, only_listed, dry_run=False):
     rows = [
         {"SKU": "100", "Title": "Red Garden Spade Steel Handle", "Selling Price (£)": 9.99},     # matches OnBuy: fine
         {"SKU": "200", "Title": "Cordless Leaf Blower Fan 21V", "Selling Price (£)": 20.0},      # OnBuy shows a kettle: mismatched
-        {"SKU": "300", "Title": "XGODY Mini 4K Projector Portable WiFi", "Selling Price (£)": 67.05},  # sibling title: passes the name check
+        {"SKU": "300", "Title": "ACME Mini 4K Projector Portable WiFi", "Selling Price (£)": 67.05},  # sibling title: passes the name check
         {"SKU": "400", "Title": "Standing Desk Frame Electric", "Selling Price (£)": 80.0},      # mismatched but already at stock 0
     ]
     items = [
         {"sku": "100", "name": "Red Garden Spade Steel Handle Digging", "stock": 5, "price": "9.99"},
         {"sku": "200", "name": "Stainless Steel Electric Kettle 1.7L", "stock": 6, "price": "20.00"},
-        {"sku": "300", "name": "XGODY 8K 4K Android Projector 1080P WiFi Bluetooth Home Theater", "stock": 10, "price": "67.05"},
+        {"sku": "300", "name": "ACME 8K 4K Android Projector 1080P WiFi Bluetooth Home Theater", "stock": 10, "price": "67.05"},
         {"sku": "400", "name": "Ergonomic Office Chair Mesh", "stock": 0, "price": "80.00"},
     ]
     monkeypatch.setenv("GOOGLE_CREDENTIALS", "{}")
