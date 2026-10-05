@@ -12,6 +12,7 @@ import os
 from collections import Counter
 
 from onbuy_client import OnBuyClient
+from retry_utils import RateLimitError
 
 WANT = [s.strip() for s in (os.getenv("SKUS") or "").split(",") if s.strip()]
 KEY = {s.lstrip("0") or s for s in WANT}
@@ -34,7 +35,11 @@ def main():
     seen, oldest, hits, shown_keys = 0, None, [], False
     statuses, levels, failed_samples, key_sets = Counter(), Counter(), [], Counter()
     for page in range(MAX_PAGES):
-        result = onbuy.list_queue(limit=PAGE, offset=page * PAGE)
+        try:
+            result = onbuy.list_queue(limit=PAGE, offset=page * PAGE)
+        except RateLimitError as exc:
+            print(f"RATE LIMITED at page {page} ({exc}) - reporting what was read so far")
+            break
         entries = result.get("results", []) if isinstance(result, dict) else []
         if not entries:
             break
@@ -52,6 +57,7 @@ def main():
             uid = str(e.get("uid") or "").strip()
             if (uid.lstrip("0") or uid) in KEY:
                 hits.append(e)
+                print(f"HIT on page {page}: {when(e)} | {json.dumps({k: e.get(k) for k in ('uid', 'status', 'opc', 'queue_id')}, default=str)}")
         if len(entries) < PAGE:
             break
     print(f"queue entries seen: {seen} | the history reaches back to {oldest}")
