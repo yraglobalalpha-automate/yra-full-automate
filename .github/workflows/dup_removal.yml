@@ -1,0 +1,91 @@
+name: Duplicate Removal (sheet rows + OnBuy listings)
+
+# Removes LIVE DUPLICATES: a later row for a supplier product that an earlier row (the keeper - the same "first row
+# wins" rule the sync uses) already owns, while the keeper is live AND Synced. One run does both halves so nothing can
+# interleave: the rows go from the product tabs (every row backed up whole to a backup tab first), then the same SKUs'
+# listings are deleted from OnBuy in batches. dry_run=yes (default) only reports and writes the plan
+# (removal_plan.csv). Holds the onbuy-api group for the whole run - dispatch it when the group is idle (a pending run is
+# replaced by a newer pending one).
+
+on:
+  workflow_dispatch:
+    inputs:
+      dup_list_file:
+        description: "Repo path: approved duplicate SKUs (empty = every live duplicate the rules allow)"
+        required: false
+        default: ""
+      exclude_file:
+        description: "Repo path: SKUs that are never removed (open orders)"
+        required: false
+        default: ""
+      max_remove:
+        description: "Refuse to remove for real when the plan holds more rows than this"
+        required: false
+        default: "200"
+      backup_tab:
+        description: "Backup tab (created, or appended to)"
+        required: false
+        default: "Removed 2026-10-05"
+      dry_run:
+        description: "yes = report only; no = remove for real"
+        required: false
+        default: "yes"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Plan, back up and remove sheet rows
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          DUP_LIST_FILE: ${{ inputs.dup_list_file }}
+          EXCLUDE_SKUS_FILE: ${{ inputs.exclude_file }}
+          MAX_REMOVE: ${{ inputs.max_remove }}
+          BACKUP_TAB: ${{ inputs.backup_tab }}
+          DRY_INPUT: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_INPUT" = "no" ]; then export DRY_RUN=0; else export DRY_RUN=1; fi
+          python guarded_remove_rows.py
+
+      - name: Delete the removed SKUs' listings from OnBuy (batched)
+        if: ${{ inputs.dry_run == 'no' }}
+        env:
+          DELETE_SKUS_FILE: onbuy_delete_list.txt
+          DRY_RUN: "0"
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: |
+          if ! grep -q . onbuy_delete_list.txt; then
+            echo "nothing to delete on OnBuy"
+            exit 0
+          fi
+          python delete_listings_batch.py
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: removal
+          path: |
+            removal_plan.csv
+            onbuy_delete_list.txt
+            delete_results.csv
+          if-no-files-found: ignore

@@ -99,3 +99,22 @@ def test_duplicate_list_restricts_which_duplicates_may_go():
 def test_rows_without_a_supplier_id_are_never_duplicates():
     rows = [row("Sheet1", 2, "111", ""), row("Sheet1", 3, "222", "")]
     assert removal_plan.plan(rows, [], True)["remove"] == []
+
+
+def test_duplicate_is_held_unless_its_original_is_synced_when_required():
+    keeper = dict(row("Sheet1", 2, "111", "ebay:1", stock=5), sync="Awaiting OnBuy go-live")
+    copy = row("Sheet1", 9, "222", "ebay:1", stock=5)
+    assert names(removal_plan.plan([keeper, copy], [], True)["remove"]) == [("Sheet1", 9)]
+    out = removal_plan.plan([keeper, copy], [], True, require_keeper_synced=True)
+    assert out["remove"] == [] and "not Synced" in out["held"][0][1]
+    keeper["sync"] = "Synced"
+    assert names(removal_plan.plan([keeper, copy], [], True, require_keeper_synced=True)["remove"]) == [("Sheet1", 9)]
+
+
+def test_excluded_skus_are_never_removed_whichever_rule_would_take_them():
+    rows = [row("Sheet1", 2, "111", "ebay:1", stock=5), row("Sheet1", 9, "222", "ebay:1", stock=5)]
+    out = removal_plan.plan(rows, ["111"], True, exclude_skus={"222", "111"})
+    assert out["remove"] == [] and {h[0]["sku"] for h in out["held"]} == {"111", "222"}
+    assert all("excluded" in h[1] for h in out["held"])
+    # not excluded: the copy goes
+    assert names(removal_plan.plan(rows, [], True, exclude_skus={"999"})["remove"]) == [("Sheet1", 9)]

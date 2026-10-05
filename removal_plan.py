@@ -20,6 +20,11 @@ moved on since the list was made:
     product). Flag text such as "...already used on row 520" is NOT used -
     row numbers in old flags go stale when rows are deleted - the groups are
     recomputed from the current links.
+
+Two optional guards (2026-10-05): require_keeper_synced - a duplicate only goes
+while its original row's Sync Status starts with "Synced" (the "live" flag alone
+can be a stuck product); exclude_skus - SKUs that are never removed (open
+orders, protected listings), whichever rule would take them.
 """
 
 
@@ -27,9 +32,11 @@ def _in_stock(row):
     return (row.get("stock") or 0) > 0
 
 
-def plan(rows, listed_skus, include_live_dups=True, approved_dup_skus=None):
+def plan(rows, listed_skus, include_live_dups=True, approved_dup_skus=None, require_keeper_synced=False,
+         exclude_skus=None):
     """-> {"remove": [row + reason], "held": [(row, reason)], "absent": [sku]}"""
     listed = set(listed_skus)
+    never = set(exclude_skus or ())
     by_sku = {}
     for r in rows:
         if r["sku"]:
@@ -43,6 +50,9 @@ def plan(rows, listed_skus, include_live_dups=True, approved_dup_skus=None):
     a_ok = set()
     for sku in sorted(listed & set(by_sku)):
         rs = by_sku[sku]
+        if sku in never:
+            held.append((rs[0], "excluded (open order / protected SKU) - not touched"))
+            continue
         if len(rs) > 1:
             held.append((rs[0], "SKU is on more than one sheet row - not touched"))
             continue
@@ -75,6 +85,12 @@ def plan(rows, listed_skus, include_live_dups=True, approved_dup_skus=None):
                     continue
                 if approved is not None and dup["sku"] not in approved:
                     held.append((dup, "live duplicate that was not in the approved duplicate list"))
+                    continue
+                if dup["sku"] in never:
+                    held.append((dup, "excluded (open order / protected SKU) - not touched"))
+                    continue
+                if require_keeper_synced and not str(keeper.get("sync") or "").startswith("Synced"):
+                    held.append((dup, f"its original row is not Synced ({str(keeper.get('sync') or 'blank')[:40]})"))
                     continue
                 if key(keeper) in a_ok:
                     if _in_stock(dup):

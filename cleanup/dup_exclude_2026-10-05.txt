@@ -1,0 +1,7 @@
+# SKUs that must never be removed by the duplicate clean-up of 2026-10-05: they have an OnBuy order awaiting dispatch.
+663697696453
+993578879973
+154390397568
+871835202804
+304285306230
+175117835194
