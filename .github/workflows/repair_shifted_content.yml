@@ -13,6 +13,10 @@ on:
         description: "Comma-separated SKUs to repair unconditionally (name may match)"
         required: false
         default: ""
+      only_listed:
+        description: "Repair ONLY the SKUs named above, no other shifted listing (yes/no)"
+        required: false
+        default: "no"
       tab:
         description: "Worksheet (empty = first tab)"
         required: false
@@ -46,6 +50,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
           REPAIR_LIMIT: ${{ inputs.repair_limit }}
           REPAIR_SKUS: ${{ inputs.repair_skus }}
+          REPAIR_ONLY_LISTED: ${{ inputs.only_listed == 'yes' && '1' || '0' }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           SHEET_TAB: ${{ inputs.tab }}
           ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}

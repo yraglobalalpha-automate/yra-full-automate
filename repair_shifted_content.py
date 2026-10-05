@@ -33,6 +33,8 @@ REPAIR_LIMIT = int(os.getenv("REPAIR_LIMIT") or "0")  # 0 = no cap
 # wrong order on 993578879973 proved it. Re-pushing a row's own content
 # is harmless when the listing was already correct.
 REPAIR_SKUS = {s.strip() for s in (os.getenv("REPAIR_SKUS") or "").split(",") if s.strip()}
+# Only the named SKUs (2026-10-05): a one-SKU diagnostic must not also repair every other shifted listing in sheet order.
+REPAIR_ONLY_LISTED = (os.getenv("REPAIR_ONLY_LISTED") or "").strip().lower() in ("1", "yes", "true")
 
 
 def norm(s):
@@ -121,6 +123,8 @@ def main():
             continue
         title = str(r.get("Title") or "").strip()
         if not title:
+            continue
+        if REPAIR_ONLY_LISTED and sku not in REPAIR_SKUS:
             continue
         if sku not in REPAIR_SKUS and similar(listings[sku], title) >= 0.5:
             continue
