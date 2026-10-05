@@ -11,12 +11,14 @@ import json
 import os
 from collections import Counter
 
-from onbuy_client import OnBuyClient
+from onbuy_client import BASE_URL, OnBuyClient
 from retry_utils import RateLimitError
 
 WANT = [s.strip() for s in (os.getenv("SKUS") or "").split(",") if s.strip()]
 KEY = {s.lstrip("0") or s for s in WANT}
 MAX_PAGES = int(os.getenv("MAX_PAGES") or "120")
+# LISTING_SKU: also read this ONE listing (name, stock, price) with a filtered GET - 1-3 requests instead of a 60-page sweep.
+LISTING_SKU = (os.getenv("LISTING_SKU") or "").strip()
 PAGE = 50
 DATE_KEYS = ("created_at", "date_created", "created", "date", "updated_at", "processed_at")
 
@@ -28,10 +30,36 @@ def when(entry):
     return "?"
 
 
+def probe_listing(onbuy, sku):
+    """Which filter spelling does GET /v2/listings honour for one SKU? A filter is honoured when the answer is the SKU alone;
+    an ignored filter just returns the first listings of the account (SKU not among them)."""
+    base = {"site_id": onbuy.site_id, "limit": 5, "offset": 0}
+    for extra in ({"filter[sku]": sku}, {"sku": sku}, {"filter[sku]": sku.lstrip("0") or sku}):
+        try:
+            r = onbuy._send("GET", f"{BASE_URL}/listings", what="listing filter test", params={**base, **extra}, timeout=60)
+            if r.status_code == 429:
+                print("listing filter: RATE LIMITED - try again later")
+                return
+            body = r.json()
+            items = (body.get("results") if isinstance(body, dict) else body) or []
+            hit = [i for i in items if str((i or {}).get("sku") or "").strip() == sku]
+            print(f"listing filter {extra}: HTTP {r.status_code}, {len(items)} item(s) returned, SKU present: {bool(hit)}")
+            for i in hit[:1]:
+                keep = {k: i.get(k) for k in ("sku", "name", "price", "stock", "product_encoded_id", "updated_at", "created_at")}
+                print("LISTING|" + json.dumps(keep, ensure_ascii=False, default=str))
+            if hit and len(items) <= 2:
+                print("-> this filter is honoured")
+                return
+        except Exception as exc:  # noqa: BLE001 - read-only diagnostic
+            print(f"listing filter {extra}: error {str(exc)[:150]}")
+
+
 def main():
     onbuy = OnBuyClient()
     if not onbuy.authenticate():
         raise SystemExit("OnBuy auth failed")
+    if LISTING_SKU:
+        probe_listing(onbuy, LISTING_SKU)
     seen, oldest, hits, shown_keys = 0, None, [], False
     statuses, levels, failed_samples, key_sets = Counter(), Counter(), [], Counter()
     for page in range(MAX_PAGES):
