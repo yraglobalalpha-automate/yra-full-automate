@@ -12,3 +12,6 @@ CLAUDE.md
 .claude/
 livelog.txt
 absolute-nexus-*.json
+
+# Hand-off file the nightly zero step leaves for the price/stock audit (CI workspace only) - never commit
+held_at_zero.txt
