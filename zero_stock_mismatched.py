@@ -20,6 +20,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import sheet_tabs
 
 from onbuy_client import BASE_URL, OnBuyClient
+import held_skus
 import listings_cache
 from retry_utils import RateLimitError, with_retry
 
@@ -28,6 +29,9 @@ log = logging.getLogger(__name__)
 
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
 ZERO_SKUS = {s.strip() for s in (os.getenv("ZERO_SKUS") or "").split(",") if s.strip()}
+# Only the named SKUs (2026-10-05): a listing the name check cannot flag (YRA 993578879973 shares its brand and half its words
+# with the product it wrongly shows) is zeroed without touching any other mismatched listing.
+ZERO_ONLY_LISTED = (os.getenv("ZERO_ONLY_LISTED") or "").strip().lower() in ("1", "yes", "true")
 
 
 def norm(s):
@@ -113,15 +117,18 @@ def main():
             if _i + 1 < len(_sku_display):
                 _row["SKU"] = str(_sku_display[_i + 1]).replace(",", "").strip()
 
-    targets = []
+    targets, held = [], []
     for i, r in enumerate(rows):
         sku = str(r.get("SKU") or "").strip()
         if not sku or sku not in listings:
             continue
         title = str(r.get("Title") or "").strip()
         lname, lstock, lprice = listings[sku]
+        if ZERO_ONLY_LISTED and sku not in ZERO_SKUS:
+            continue
         if sku not in ZERO_SKUS and (not title or similar(lname, title) >= 0.5):
             continue
+        held.append(sku)  # the audit holds it at 0 whether or not it still has stock to take off
         # Already at zero (a previous pass got it, or it was empty anyway):
         # nothing to protect - skipping makes every pass pure progress, so
         # the chain converges instead of redoing the same head each run.
@@ -156,13 +163,15 @@ def main():
                 log.info("SKIP %s (row %d): no usable price on row or listing", sku, i + 2)
                 continue
         targets.append((i + 2, sku, kind, lname, title, price, lstock))
-    log.info("mismatched listings to zero: %d", len(targets))
+    log.info("mismatched listings to zero: %d (%d held in all, stock or not)", len(targets), len(held))
     for t in targets:
         log.info("TARGET|%d|%s|%s|%.2f|%s|%s|%s",
                  t[0], t[1], t[2], t[5], t[6], t[3][:70], t[4][:70])
     if DRY_RUN:
         log.info("DRY RUN - no stock changed")
         return
+    # Hand-off to the price/stock audit that runs next in the nightly job: it must not push the sheet's stock back onto these.
+    log.info("held at zero for the audit: %d", held_skus.remember(held))
 
     zeroed = failed = 0
     # Account quota is 12,000 calls/day (user-confirmed) - the stops we hit

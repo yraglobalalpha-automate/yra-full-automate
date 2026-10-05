@@ -17,6 +17,7 @@ import sheet_tabs
 import json
 
 from onbuy_client import BASE_URL, OnBuyClient
+import held_skus
 import listings_cache
 from retry_utils import with_retry
 
@@ -132,6 +133,14 @@ def main():
     live = live_listings(onbuy)
     log.info("sheet rows with SKU: %d | live listings: %d", len(sheet), len(live))
 
+    # Listings that show ANOTHER product (hold_at_zero_skus.txt + what tonight's zero step found) never get the sheet's price/stock:
+    # they are held at stock 0 (2026-10-05: YRA 993578879973 was re-stocked by this very audit after the zero step and sold - a wrong
+    # order). held_zero = those still showing stock; `live` no longer contains any held listing.
+    held_zero, live = held_skus.split_held(live, sheet, held_skus.held_set())
+    log.info("HELD at stock 0 (OnBuy shows another product): %d still showing stock", len(held_zero))
+    for sku, price, ls, tab, rn in held_zero[:40]:
+        log.info("  HELD %s [%s row %d]: live stock %d, price %.2f", sku, tab, rn, ls, price)
+
     under, over, stock_off, under_def = [], [], [], []
     for sku, (lp, lstock, upd) in live.items():
         if sku not in sheet:
@@ -174,11 +183,13 @@ def main():
         log.info("REPORT ONLY - set FIX=1 to push the sheet's price/stock onto the drifted listings")
         return
     targets = under + over + stock_off
-    if not targets:
+    if not targets and not held_zero:
         log.info("nothing to fix")
         return
-    log.info("FIX: pushing sheet price/stock onto %d listing(s)", len(targets))
+    log.info("FIX: pushing sheet price/stock onto %d listing(s), taking the stock off %d held listing(s)",
+             len(targets), len(held_zero))
     payload = [(sku, sp, ss) for sku, sp, lp, ss, ls, upd, tab, rn in targets]
+    payload += [(sku, price, 0) for sku, price, ls, tab, rn in held_zero]
     fixed = failed = 0
     for c in range(0, len(payload), 500):
         chunk = payload[c:c + 500]

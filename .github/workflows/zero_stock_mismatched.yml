@@ -10,6 +10,10 @@ on:
         description: "Comma-separated SKUs to zero regardless of name match"
         required: false
         default: ""
+      only_listed:
+        description: "Zero ONLY the SKUs named above and leave every other mismatched listing alone (yes/no)"
+        required: false
+        default: "no"
       tab:
         description: "Worksheet (empty = first tab)"
         required: false
@@ -53,4 +57,5 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ZERO_SKUS: ${{ inputs.zero_skus }}
+          ZERO_ONLY_LISTED: ${{ inputs.only_listed == 'yes' && '1' || '0' }}
         run: python zero_stock_mismatched.py
