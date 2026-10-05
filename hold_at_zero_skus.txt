@@ -1,0 +1,6 @@
+# SKUs whose OnBuy listing shows ANOTHER product (title, description, images) but which the nightly name check cannot flag
+# (same brand, near-identical words). The nightly price/stock audit holds them at stock 0 instead of pushing the sheet's stock.
+# Remove a line only after the listing's content has been repaired (and then from protected_skus.txt too).
+993578879973  # row 2350: sheet = XGODY Mini 4K projector; OnBuy shows 'XGODY 8K 4K Android 14.0 Projector ...' since creation 2026-08-03
+992127474379  # row 2349: OnBuy shows the 8K Android 14.0 projector's content
+994903755559  # row 2351: OnBuy shows the Mini 4K projector's content

@@ -27,3 +27,6 @@
 # 2026-09-01 new shift+1 (row 7722, ice maker) - repair submitted
 222176928289
 630491351925  # 2026-09-22 source ended 31 Aug, oversold - held at 0 pending link replacement
+# 2026-10-05 XGODY projector rows 2349-2351 (created 08-03 with shifted content; the 08-24 repair never changed the names) - held at 0
+992127474379
+994903755559
