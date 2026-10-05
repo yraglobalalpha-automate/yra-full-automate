@@ -30,3 +30,17 @@
 # 2026-10-05 XGODY projector rows 2349-2351 (created 08-03 with shifted content; the 08-24 repair never changed the names) - held at 0
 992127474379
 994903755559
+# 2026-10-05 nightly-flagged listings showing another product, zeroed on the user's instruction - kept at 0 so the sync cannot re-stock them
+988957095280
+710289245572
+715666733697
+717759482451
+978578325378
+967439368067
+967757616260
+708901210664
+731594029800
+461158241033
+799729275973
+875136294650
+285182813413
