@@ -58,34 +58,29 @@ def probe_listing(onbuy, sku):
 
 
 def probe_products(onbuy, opcs, uids):
-    """READ-ONLY: GET /v2/products for each OPC / our uid (first honoured spelling wins; 1-2 requests each)."""
-    wanted = ([("opc", o, ("filter[opc]", "opc")) for o in opcs] + [("uid", u, ("filter[uid]", "uid")) for u in uids])
-    for field, value, spellings in wanted:
-        for key in spellings:
-            try:
-                r = onbuy._send("GET", f"{BASE_URL}/products", what="product filter test",
-                                params={"site_id": onbuy.site_id, "limit": 5, key: value}, timeout=60)
-                if r.status_code == 429:
-                    print("products: RATE LIMITED - try again later")
-                    return
-                if r.status_code != 200:
-                    print(f"products {key}={value}: HTTP {r.status_code} body: {r.text[:300]}")
-                    continue
-                body = r.json()
-                items = (body.get("results") if isinstance(body, dict) else body) or []
-                hit = [i for i in items if str((i or {}).get(field) or "").strip().upper() == value.upper()]
-                print(f"products {key}={value}: HTTP {r.status_code}, {len(items)} item(s), match: {len(hit)}")
-                if items:
-                    print("  product keys:", sorted((items[0] or {}).keys()))
-                for i in hit[:3]:
-                    keep = {k: (str(i.get(k))[:140] if k in ("description", "name", "product_name") else i.get(k))
-                            for k in ("opc", "uid", "name", "product_name", "brand_name", "brand", "product_codes", "category_id", "created_at", "default_image")
-                            if k in i}
-                    print("PRODUCT|" + json.dumps(keep, ensure_ascii=False, default=str)[:900])
-                if hit:
-                    break
-            except Exception as exc:  # noqa: BLE001 - read-only diagnostic
-                print(f"products {key}={value}: error {str(exc)[:150]}")
+    """READ-ONLY: GET /v2/products?search=<OPC or barcode> (the endpoint insists on `search`; 'opc'/'uid' are not valid filters)."""
+    for value in list(opcs) + list(uids):
+        try:
+            r = onbuy._send("GET", f"{BASE_URL}/products", what="product search",
+                            params={"site_id": onbuy.site_id, "search": value, "limit": 10}, timeout=60)
+            if r.status_code == 429:
+                print("products: RATE LIMITED - try again later")
+                return
+            if r.status_code != 200:
+                print(f"products search={value}: HTTP {r.status_code} body: {r.text[:300]}")
+                continue
+            body = r.json()
+            items = (body.get("results") if isinstance(body, dict) else body) or []
+            print(f"products search={value}: {len(items)} item(s)")
+            if items:
+                print("  product keys:", sorted((items[0] or {}).keys()))
+            for i in items[:6]:
+                keep = {k: (str(i.get(k))[:140] if k in ("description", "name", "product_name") else i.get(k))
+                        for k in ("opc", "uid", "name", "product_name", "brand_name", "brand", "product_codes", "category_id", "created_at")
+                        if k in i}
+                print("PRODUCT|" + json.dumps(keep, ensure_ascii=False, default=str)[:700])
+        except Exception as exc:  # noqa: BLE001 - read-only diagnostic
+            print(f"products search={value}: error {str(exc)[:150]}")
 
 
 def main():
