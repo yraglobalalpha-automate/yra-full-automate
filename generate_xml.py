@@ -26,6 +26,7 @@ import supabase_db
 from onbuy_client import OnBuyClient
 import keepa_client
 import sku_aliases
+import link_owners
 from retry_utils import AuthError, PermanentError, RateLimitError, TransientError, raise_for_status, with_retry
 from sanitize import sanitize_description, validate_images, strip_emojis
 
@@ -2068,6 +2069,7 @@ def main():
     # duplicate. Fails OPEN: a read error only logs and skips the check.
     all_sku_counts = {}
     all_link_counts, all_link_first = {}, {}
+    _link_entries = []   # (tab, row, supplier identity, live on OnBuy) in sheet order -> link_owners.build
     try:
         # PRODUCT tabs only (the first/eBay tab and the Amazon tab). System
         # tabs carry a SKU column too - BuyBox mirrors every tracked
@@ -2089,15 +2091,22 @@ def main():
                     if _v:
                         all_sku_counts[_v] = all_sku_counts.get(_v, 0) + 1
             # One supplier product = one listing (user 2026-09-21): map
-            # every parseable link identity to its FIRST row so a later
+            # every parseable link identity to its OWNER row so every other
             # row re-using the link freezes instead of listing the same
-            # source product a second time.
+            # source product a second time. The owner is the first row that
+            # is already LIVE on OnBuy, else the first row in sheet order
+            # (link_owners.py, 2026-10-05) - never "whichever row this run
+            # happens to reach first", which let a never-listed copy freeze
+            # the live original.
             if "Supplier URL" in _wh:
+                _made = (_ws.col_values(_wh.index("OnBuy Product Created") + 1)[1:]
+                         if "OnBuy Product Created" in _wh else [])
                 for _ri, _v in enumerate(_ws.col_values(_wh.index("Supplier URL") + 1)[1:], start=2):
                     _id = _supplier_identity(_v)
                     if _id:
-                        all_link_counts[_id] = all_link_counts.get(_id, 0) + 1
-                        all_link_first.setdefault(_id, (_ws.title, _ri))
+                        _live = _ri - 2 < len(_made) and str(_made[_ri - 2]).strip().upper() == "TRUE"
+                        _link_entries.append((_ws.title, _ri, _id, _live))
+        all_link_counts, all_link_first = link_owners.build(_link_entries)
     except Exception as exc:  # noqa: BLE001 - advisory guard, never fatal
         logger.warning("SKU guard: sheet-wide count failed (%s) - duplicate check off this run", str(exc)[:120])
         all_sku_counts = {}
@@ -2211,11 +2220,24 @@ def main():
         elif supplier == "Amazon":
             # One Amazon product per row: the same ASIN under two SKUs would
             # create two OnBuy listings of one supplier product (seen live:
-            # one mattress pasted on two rows). First row processed keeps it.
+            # one mattress pasted on two rows). The OWNER keeps it: the first
+            # live row, else the first row in sheet order (link_owners.py) -
+            # the old "first row processed" claim froze live originals behind
+            # never-listed copies, because a batch runs never-listed rows first.
             _dup_asin = keepa_client.parse_asin(url)
-            _first_row = amazon_asin_rows.setdefault(_dup_asin, i)
-            if _first_row != i:
-                amazon_flag = f"Failed: ASIN {_dup_asin} is already used on row {_first_row} - one Amazon product per row"
+            _aid = f"amazon:{_dup_asin}" if _dup_asin else ""
+            _dup_of = None
+            if all_link_first:
+                _own = all_link_first.get(_aid)
+                if _own and all_link_counts.get(_aid, 0) > 1 and _own != (sheet.title, i):
+                    _dup_of = _own
+            else:   # the sheet-wide table is unavailable this run: first row processed keeps it (the old rule)
+                _fr_old = amazon_asin_rows.setdefault(_dup_asin, i)
+                if _fr_old != i:
+                    _dup_of = (sheet.title, _fr_old)
+            if _dup_of:
+                amazon_flag = (f"Failed: ASIN {_dup_asin} is already used on row {_dup_of[1]}"
+                               f"{'' if _dup_of[0] == sheet.title else ' (' + _dup_of[0] + ')'} - one Amazon product per row")
                 logger.warning("Row %d (SKU %s): %s", i, sku, amazon_flag)
         # Uniqueness guard (2026-09-17), every supplier and tab: a SKU on
         # more than one sheet row freezes them ALL until a human picks one.
