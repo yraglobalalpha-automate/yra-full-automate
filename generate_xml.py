@@ -25,6 +25,7 @@ import storage
 import supabase_db
 from onbuy_client import OnBuyClient
 import keepa_client
+import keepa_cache
 import sku_aliases
 import link_owners
 from retry_utils import AuthError, PermanentError, RateLimitError, TransientError, raise_for_status, with_retry
@@ -102,6 +103,17 @@ PRICE_CHECK_MEDIUM_OVER_PCT = 30
 #         goes through the Sheet + feed.xml as before
 #   3) once verified, clear ONBUY_API_TEST_SKUS to push every processed SKU
 ONBUY_API_PUSH_ENABLED = os.getenv("ONBUY_API_PUSH_ENABLED", "false").strip().lower() == "true"
+
+# Keepa prefetch / cache (keepa_cache.py, 2026-10-05). PREFETCH_ONLY = the lock-free job: the same batch selection, the Keepa
+# fetch, the answers saved to the private cache, then STOP - no OnBuy contact, no sheet writes. CACHE = the locked sync reads those
+# answers back and fetches live only what is missing (everything, as always, when no usable cache exists).
+KEEPA_PREFETCH_ONLY = (os.getenv("KEEPA_PREFETCH_ONLY") or "").strip().lower() in ("1", "yes", "true")
+KEEPA_CACHE = (os.getenv("KEEPA_CACHE") or "").strip().lower() in ("1", "yes", "true")
+KEEPA_CACHE_MAX_AGE_H = float(os.getenv("KEEPA_CACHE_MAX_AGE_HOURS") or "3")       # the sync: an own-run cache older than this is ignored
+KEEPA_PREFETCH_REUSE_H = float(os.getenv("KEEPA_PREFETCH_REUSE_HOURS") or "1.5")   # a prefetch re-run reuses a cache younger than this
+if KEEPA_PREFETCH_ONLY:
+    ONBUY_API_PUSH_ENABLED = False   # no OnBuy token request, OOS pass, oversell guard or push in the prefetch job
+    RUN_CATEGORY_MAPPING = False     # and no sheet write before the fetch
 ONBUY_API_TEST_SKUS = {s.strip() for s in os.getenv("ONBUY_API_TEST_SKUS", "").split(",") if s.strip()}
 
 # Confirmed from the real account's API usage page: OnBuy allows 240 PUT and
@@ -2123,8 +2135,17 @@ def main():
                 f"generate_xml.py ({sheet.title} tab) could not start the Keepa client: {exc}. "
                 "No sheet rows were touched. Add the KEEPA_API_KEY secret.")
             sys.exit(1)
+        # Keepa prefetch / cache (keepa_cache.py, 2026-10-05): the slow, token-paced fetch runs in its own lock-free job and this
+        # run reads the answers back; whatever the cache lacks is fetched live, exactly as before.
+        _kc_started = datetime.now(timezone.utc)
+        _kc_payload = None
         try:
-            amazon_products = keepa.fetch_products(amazon_asins)
+            amazon_products, _kc_cached, _kc_payload = keepa_cache.answers(
+                keepa, amazon_asins, sheet.title, KEEPA_CACHE, KEEPA_PREFETCH_ONLY, os.getenv("GITHUB_RUN_ID") or "",
+                KEEPA_CACHE_MAX_AGE_H, KEEPA_PREFETCH_REUSE_H)
+            if KEEPA_CACHE or KEEPA_PREFETCH_ONLY:
+                logger.info("Keepa cache: %d of %d ASIN(s) answered from the cache, %d fetched live",
+                            _kc_cached, len(amazon_asins), len(amazon_asins) - _kc_cached)
             logger.info("Keepa: %d of %d ASIN(s) answered, %d token(s) used, %s left",
                         len(amazon_products), len(amazon_asins), keepa.tokens_consumed, keepa.tokens_left)
         except (TransientError, PermanentError) as exc:
@@ -2132,6 +2153,15 @@ def main():
             run_had_errors = True
             logger.error("Keepa fetch failed for %d ASIN(s) - Amazon rows left untouched this run: %s",
                          len(amazon_asins), exc)
+        if KEEPA_PREFETCH_ONLY:
+            if amazon_fetch_failed:
+                logger.error("Keepa prefetch failed - nothing cached; the sync job will fetch live")
+                sys.exit(1)
+            keepa_cache.store(sheet.title, amazon_products, amazon_asins, _kc_payload,
+                              os.getenv("GITHUB_RUN_ID") or "", _kc_started)
+            logger.info("Keepa prefetch done: %d ASIN(s) answered, %d token(s) used - no OnBuy contact, no sheet writes",
+                        len(amazon_products), keepa.tokens_consumed)
+            return
         # One product per SKU across tabs: an Amazon row whose SKU already
         # lives on the eBay tab would collide on OnBuy and in Supabase.
         if SHEET_TAB:
@@ -2143,6 +2173,11 @@ def main():
                                      for v in _first.col_values(_fh.index("SKU") + 1)[1:]}
             except Exception as exc:  # noqa: BLE001 - advisory guard, never fatal
                 logger.warning("Could not read the eBay tab's SKUs for the cross-tab check: %s", str(exc)[:120])
+
+    if KEEPA_PREFETCH_ONLY:
+        # no Amazon row in this run's batch (the branch above returns once it has cached the answers): nothing to prefetch
+        logger.info("Keepa prefetch: no Amazon row in this run's batch - nothing to fetch")
+        return
 
     for idx, row in batch:
         i = idx + 2
