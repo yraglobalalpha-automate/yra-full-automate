@@ -10,8 +10,9 @@ from oauth2client.service_account import ServiceAccountCredentials
 SHEET_NAME = os.getenv("SHEET_NAME") or "YRA_Full_Feed_Master"
 BACKUP_TAB = os.getenv("BACKUP_TAB") or "Removed 2026-10-02"
 WANT = [s.strip() for s in (os.getenv("SKUS") or "").split(",") if s.strip()]
+# No Cost Price / Shipping Cost columns on purpose: this repository (and so every run log) is public.
 SHOW = ["bk_removed_utc", "bk_tab", "bk_row", "bk_reason", "bk_SKU", "bk_Title", "bk_Supplier URL", "bk_Stock",
-        "bk_Status", "bk_Selling Price (£)", "bk_Cost Price (£)", "bk_Shipping Cost (£)", "bk_Last Checked Time",
+        "bk_Status", "bk_Selling Price (£)", "bk_Last Checked Time",
         "bk_Last OnBuy Sync", "bk_Sync Status", "bk_OnBuy Product Created", "bk_OnBuy Listing Active", "bk_OPC",
         "bk_OnBuy Product ID", "bk_Category", "bk_Brand", "bk_EAN"]
 
