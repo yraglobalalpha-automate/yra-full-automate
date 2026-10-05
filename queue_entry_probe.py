@@ -68,7 +68,10 @@ def probe_products(onbuy, opcs, uids):
                 if r.status_code == 429:
                     print("products: RATE LIMITED - try again later")
                     return
-                body = r.json() if r.status_code == 200 else {}
+                if r.status_code != 200:
+                    print(f"products {key}={value}: HTTP {r.status_code} body: {r.text[:300]}")
+                    continue
+                body = r.json()
                 items = (body.get("results") if isinstance(body, dict) else body) or []
                 hit = [i for i in items if str((i or {}).get(field) or "").strip().upper() == value.upper()]
                 print(f"products {key}={value}: HTTP {r.status_code}, {len(items)} item(s), match: {len(hit)}")
