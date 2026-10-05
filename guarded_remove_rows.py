@@ -43,6 +43,7 @@ MAX_REMOVE = int(os.getenv("MAX_REMOVE") or "200")
 BACKUP_TAB = os.getenv("BACKUP_TAB") or "Removed 2026-10-05"
 INCLUDE_DUPS = (os.getenv("REMOVE_LIVE_DUPS") or "yes").strip().lower() in ("1", "yes", "true")
 REQUIRE_KEEPER_SYNCED = (os.getenv("REQUIRE_KEEPER_SYNCED") or "yes").strip().lower() in ("1", "yes", "true")
+INCLUDE_DEAD = (os.getenv("REMOVE_DEAD_COPIES") or "no").strip().lower() in ("1", "yes", "true")   # rule C
 
 
 def load_list(path):
@@ -168,7 +169,7 @@ def delete_rows(book, tab_title, skus):
 def main():
     listed = load_list(os.getenv("OOS_LIST_FILE") or "")
     approved = load_list(os.getenv("DUP_LIST_FILE") or "") if (os.getenv("DUP_LIST_FILE") or "").strip() else None
-    print(f"listed SKUs: {len(listed)} | live duplicates: {'on' if INCLUDE_DUPS else 'off'}"
+    print(f"listed SKUs: {len(listed)} | live duplicates: {'on' if INCLUDE_DUPS else 'off'} | dead copies: {'on' if INCLUDE_DEAD else 'off'}"
           f"{'' if approved is None else f' (limited to {len(approved)} approved SKU(s))'} | "
           f"{'DRY RUN' if DRY_RUN else 'LIVE RUN'}")
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
@@ -200,7 +201,8 @@ def main():
     print(f"never removed (open orders / protected): {len(exclude)} SKU(s) | keeper must be Synced: "
           f"{'yes' if REQUIRE_KEEPER_SYNCED else 'no'}")
     out = removal_plan.plan(rows, listed, include_live_dups=INCLUDE_DUPS, approved_dup_skus=approved,
-                            require_keeper_synced=REQUIRE_KEEPER_SYNCED, exclude_skus=exclude)
+                            require_keeper_synced=REQUIRE_KEEPER_SYNCED, exclude_skus=exclude,
+                            include_dead_copies=INCLUDE_DEAD)
     remove, held, absent = out["remove"], out["held"], out["absent"]
     removed_keys = {(r["tab"], r["row"]) for r in remove}
     held = [(r, why) for r, why in held if (r["tab"], r["row"]) not in removed_keys]
@@ -208,7 +210,8 @@ def main():
     by_reason = {}
     for r in remove:
         k = ("listed (out of stock) and a live duplicate" if "and a live duplicate" in r["reason"]
-             else "live duplicate" if r["reason"].startswith("live duplicate") else r["reason"])
+             else "live duplicate" if r["reason"].startswith("live duplicate")
+             else "dead copy (never listed)" if r["reason"].startswith("dead copy") else r["reason"])
         by_reason[(r["tab"], k)] = by_reason.get((r["tab"], k), 0) + 1
     print(f"\nWILL REMOVE {len(remove)} row(s):")
     for (tab, k), n in sorted(by_reason.items()):
@@ -236,8 +239,8 @@ def main():
     # What state are the KEEPERS (the rows that stay) in?
     kc = {}
     for r in remove:
-        if r["reason"].startswith("live duplicate"):
-            k = groups[r["ident"]][0]
+        if r["reason"].startswith(("live duplicate", "dead copy")):
+            k = removal_plan.owner(groups[r["ident"]])
             cls = ("keeper Synced" if k["sync"].startswith("Synced")
                    else "keeper awaiting/pending" if k["sync"].startswith(("Awaiting", "Pending"))
                    else "keeper frozen/failed" if k["sync"].startswith(("Failed", "BRAND", "Skipped"))
@@ -257,7 +260,8 @@ def main():
     for r in kept_flagged:
         g = groups.get(r["ident"], []) if r["ident"] else None
         k = ("no supplier id on the link" if g is None else "alone on its supplier link" if len(g) < 2
-             else "it is now the FIRST row of its supplier product (the original is gone)" if g[0] is r else "other")
+             else "it is now the FIRST row of its supplier product (the original is gone)" if removal_plan.owner(g) is r
+             else "other")
         fc[k] += 1
     print(f"\nFLAGGED as duplicate by the sync, live, but NOT removed: {len(kept_flagged)} (of {len(flagged)} flagged live)")
     for k, n in fc.items():
@@ -277,11 +281,12 @@ def main():
                     "keeper_tab", "keeper_row", "keeper_sync", "keeper_stock"])
 
         def keeper_cells(r):
-            k = groups[r["ident"]][0] if r["ident"] in groups and groups[r["ident"]][0] is not r else None
+            k = removal_plan.owner(groups[r["ident"]]) if r["ident"] in groups else None
+            k = None if k is r else k
             return [k["tab"], k["row"], k["sync"][:60], k["stock"]] if k else ["", "", "", ""]
         for r in remove:
             w.writerow(["REMOVE", r["tab"], r["row"], r["sku"], r["stock"], r["created"], r["sync"][:60], r["reason"]]
-                       + (keeper_cells(r) if r["reason"].startswith("live duplicate") else ["", "", "", ""]))
+                       + (keeper_cells(r) if r["reason"].startswith(("live duplicate", "dead copy")) else ["", "", "", ""]))
         for r, why in held:
             w.writerow(["HELD", r["tab"], r["row"], r["sku"], r["stock"], r["created"], r["sync"][:60], why]
                        + keeper_cells(r))

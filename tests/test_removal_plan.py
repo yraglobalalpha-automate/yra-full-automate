@@ -118,3 +118,43 @@ def test_excluded_skus_are_never_removed_whichever_rule_would_take_them():
     assert all("excluded" in h[1] for h in out["held"])
     # not excluded: the copy goes
     assert names(removal_plan.plan(rows, [], True, exclude_skus={"999"})["remove"]) == [("Sheet1", 9)]
+
+
+def test_dead_copies_are_off_by_default_and_never_touch_a_live_row():
+    rows = [row("Amazon", 95, "111", "amazon:B0X", stock=5), row("Amazon", 1968, "222", "amazon:B0X", created=False)]
+    assert removal_plan.plan(rows, [], True)["remove"] == []
+    out = removal_plan.plan(rows, [], False, include_dead_copies=True)
+    assert names(out["remove"]) == [("Amazon", 1968)]
+    assert out["remove"][0]["reason"].startswith("dead copy of Amazon row 95")
+
+
+def test_a_dead_copy_needs_a_live_owner():
+    rows = [row("Amazon", 95, "111", "amazon:B0X", created=False), row("Amazon", 1968, "222", "amazon:B0X", created=False)]
+    assert removal_plan.plan(rows, [], False, include_dead_copies=True)["remove"] == []
+
+
+def test_the_owner_is_the_first_live_row_so_an_earlier_never_listed_row_is_the_dead_copy():
+    rows = [row("Amazon", 40, "111", "amazon:B0X", created=False), row("Amazon", 95, "222", "amazon:B0X", stock=5)]
+    out = removal_plan.plan(rows, [], False, include_dead_copies=True)
+    assert names(out["remove"]) == [("Amazon", 40)]
+    assert removal_plan.owner([dict(r) for r in rows])["row"] == 95
+
+
+def test_a_live_non_owner_is_not_a_dead_copy():
+    rows = [row("Sheet1", 2, "111", "ebay:1", stock=5), row("Sheet1", 9, "222", "ebay:1", stock=5),
+            row("Sheet1", 12, "333", "ebay:1", created=False)]
+    out = removal_plan.plan(rows, [], False, include_dead_copies=True)
+    assert names(out["remove"]) == [("Sheet1", 12)]
+
+
+def test_dead_copy_guards_exclusions_approved_list_repeated_sku_and_synced_owner():
+    keeper = dict(row("Sheet1", 2, "111", "ebay:1", stock=5), sync="Awaiting OnBuy go-live")
+    dead = row("Sheet1", 9, "222", "ebay:1", created=False)
+    assert names(removal_plan.plan([keeper, dead], [], False, include_dead_copies=True)["remove"]) == [("Sheet1", 9)]
+    out = removal_plan.plan([keeper, dead], [], False, require_keeper_synced=True, include_dead_copies=True)
+    assert out["remove"] == [] and "not Synced" in out["held"][0][1]
+    keeper["sync"] = "Synced"
+    assert removal_plan.plan([keeper, dead], [], False, exclude_skus={"222"}, include_dead_copies=True)["remove"] == []
+    assert removal_plan.plan([keeper, dead], [], False, approved_dup_skus=["999"], include_dead_copies=True)["remove"] == []
+    twin = row("Amazon", 3, "222", "amazon:B0Q", created=False)
+    assert removal_plan.plan([keeper, dead, twin], [], False, include_dead_copies=True)["remove"] == []

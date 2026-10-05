@@ -20,6 +20,11 @@ moved on since the list was made:
     product). Flag text such as "...already used on row 520" is NOT used -
     row numbers in old flags go stale when rows are deleted - the groups are
     recomputed from the current links.
+ C. DEAD COPIES (2026-10-05, opt-in): a row that shares a supplier product with a
+    LIVE owner row (the owner = the first live row, else the first row - the sync's
+    link_owners rule), was never listed itself and so only holds the product's claim
+    as a frozen "Failed: ... already used" row. Never touches a live row; held back
+    unless the owner is live (and Synced when required).
 
 Two optional guards (2026-10-05): require_keeper_synced - a duplicate only goes
 while its original row's Sync Status starts with "Synced" (the "live" flag alone
@@ -32,8 +37,13 @@ def _in_stock(row):
     return (row.get("stock") or 0) > 0
 
 
+def owner(group):
+    """The row that keeps a supplier product: the first LIVE row, else the first row (the sync's link_owners rule)."""
+    return next((r for r in group if r["created"]), group[0])
+
+
 def plan(rows, listed_skus, include_live_dups=True, approved_dup_skus=None, require_keeper_synced=False,
-         exclude_skus=None):
+         exclude_skus=None, include_dead_copies=False):
     """-> {"remove": [row + reason], "held": [(row, reason)], "absent": [sku]}"""
     listed = set(listed_skus)
     never = set(exclude_skus or ())
@@ -63,13 +73,14 @@ def plan(rows, listed_skus, include_live_dups=True, approved_dup_skus=None, requ
         remove[key(r)] = dict(r, reason="listed (out of stock)")
         a_ok.add(key(r))
 
+    groups = {}
+    for r in rows:
+        if r["ident"]:
+            groups.setdefault(r["ident"], []).append(r)
+    approved = None if approved_dup_skus is None else set(approved_dup_skus)
+
     # ---- B: live duplicates
     if include_live_dups:
-        groups = {}
-        for r in rows:
-            if r["ident"]:
-                groups.setdefault(r["ident"], []).append(r)
-        approved = None if approved_dup_skus is None else set(approved_dup_skus)
         for ident, grp in groups.items():
             if len(grp) < 2:
                 continue
@@ -103,6 +114,31 @@ def plan(rows, listed_skus, include_live_dups=True, approved_dup_skus=None, requ
                     held.append((dup, "its original row shows no stock but this copy does - the data disagree"))
                     continue
                 remove[key(dup)] = dict(dup, reason=f"live duplicate of {keeper['tab']} row {keeper['row']}")
+
+    # ---- C: dead copies (a never-listed row behind a live owner)
+    if include_dead_copies:
+        for ident, grp in groups.items():
+            if len(grp) < 2:
+                continue
+            own = owner(grp)
+            if not own["created"]:
+                continue                           # no live owner: nothing here is a dead copy
+            for dead in grp:
+                if dead is own or dead["created"] or key(dead) in remove:
+                    continue
+                if not dead["sku"] or len(by_sku.get(dead["sku"], [])) > 1:
+                    held.append((dead, "dead copy with a missing/repeated SKU - not touched"))
+                    continue
+                if approved is not None and dead["sku"] not in approved:
+                    held.append((dead, "dead copy that was not in the approved list"))
+                    continue
+                if dead["sku"] in never:
+                    held.append((dead, "excluded (open order / protected SKU) - not touched"))
+                    continue
+                if require_keeper_synced and not str(own.get("sync") or "").startswith("Synced"):
+                    held.append((dead, f"its owner row is not Synced ({str(own.get('sync') or 'blank')[:40]})"))
+                    continue
+                remove[key(dead)] = dict(dead, reason=f"dead copy of {own['tab']} row {own['row']} (never listed)")
 
     return {"remove": sorted(remove.values(), key=lambda r: (r["tab"], r["row"])),
             "held": held, "absent": absent}

@@ -10,6 +10,14 @@ name: Duplicate Removal (sheet rows + OnBuy listings)
 on:
   workflow_dispatch:
     inputs:
+      remove_live_dups:
+        description: "Remove live duplicate rows and their OnBuy listings (yes/no)"
+        required: false
+        default: "yes"
+      remove_dead_copies:
+        description: "Also remove DEAD COPIES: never-listed rows behind a live owner row - sheet rows only (yes/no)"
+        required: false
+        default: "no"
       dup_list_file:
         description: "Repo path: approved duplicate SKUs (empty = every live duplicate the rules allow)"
         required: false
@@ -55,6 +63,8 @@ jobs:
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           DUP_LIST_FILE: ${{ inputs.dup_list_file }}
+          REMOVE_LIVE_DUPS: ${{ inputs.remove_live_dups }}
+          REMOVE_DEAD_COPIES: ${{ inputs.remove_dead_copies }}
           EXCLUDE_SKUS_FILE: ${{ inputs.exclude_file }}
           MAX_REMOVE: ${{ inputs.max_remove }}
           BACKUP_TAB: ${{ inputs.backup_tab }}
