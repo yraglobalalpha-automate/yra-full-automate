@@ -19,6 +19,9 @@ KEY = {s.lstrip("0") or s for s in WANT}
 MAX_PAGES = int(os.getenv("MAX_PAGES") or "120")
 # LISTING_SKU: also read this ONE listing (name, stock, price) with a filtered GET - 1-3 requests instead of a 60-page sweep.
 LISTING_SKU = (os.getenv("LISTING_SKU") or "").strip()
+# PRODUCT_OPCS / PRODUCT_UIDS: also read these catalogue PRODUCTS (name, uid, codes) - which product a listing is attached to.
+PRODUCT_OPCS = [s.strip() for s in (os.getenv("PRODUCT_OPCS") or "").split(",") if s.strip()]
+PRODUCT_UIDS = [s.strip() for s in (os.getenv("PRODUCT_UIDS") or "").split(",") if s.strip()]
 PAGE = 50
 DATE_KEYS = ("created_at", "date_created", "created", "date", "updated_at", "processed_at")
 
@@ -54,12 +57,42 @@ def probe_listing(onbuy, sku):
             print(f"listing filter {extra}: error {str(exc)[:150]}")
 
 
+def probe_products(onbuy, opcs, uids):
+    """READ-ONLY: GET /v2/products for each OPC / our uid (first honoured spelling wins; 1-2 requests each)."""
+    wanted = ([("opc", o, ("filter[opc]", "opc")) for o in opcs] + [("uid", u, ("filter[uid]", "uid")) for u in uids])
+    for field, value, spellings in wanted:
+        for key in spellings:
+            try:
+                r = onbuy._send("GET", f"{BASE_URL}/products", what="product filter test",
+                                params={"site_id": onbuy.site_id, "limit": 5, key: value}, timeout=60)
+                if r.status_code == 429:
+                    print("products: RATE LIMITED - try again later")
+                    return
+                body = r.json() if r.status_code == 200 else {}
+                items = (body.get("results") if isinstance(body, dict) else body) or []
+                hit = [i for i in items if str((i or {}).get(field) or "").strip().upper() == value.upper()]
+                print(f"products {key}={value}: HTTP {r.status_code}, {len(items)} item(s), match: {len(hit)}")
+                if items:
+                    print("  product keys:", sorted((items[0] or {}).keys()))
+                for i in hit[:3]:
+                    keep = {k: (str(i.get(k))[:140] if k in ("description", "name", "product_name") else i.get(k))
+                            for k in ("opc", "uid", "name", "product_name", "brand_name", "brand", "product_codes", "category_id", "created_at", "default_image")
+                            if k in i}
+                    print("PRODUCT|" + json.dumps(keep, ensure_ascii=False, default=str)[:900])
+                if hit:
+                    break
+            except Exception as exc:  # noqa: BLE001 - read-only diagnostic
+                print(f"products {key}={value}: error {str(exc)[:150]}")
+
+
 def main():
     onbuy = OnBuyClient()
     if not onbuy.authenticate():
         raise SystemExit("OnBuy auth failed")
     if LISTING_SKU:
         probe_listing(onbuy, LISTING_SKU)
+    if PRODUCT_OPCS or PRODUCT_UIDS:
+        probe_products(onbuy, PRODUCT_OPCS, PRODUCT_UIDS)
     seen, oldest, hits, shown_keys = 0, None, [], False
     statuses, levels, failed_samples, key_sets = Counter(), Counter(), [], Counter()
     for page in range(MAX_PAGES):

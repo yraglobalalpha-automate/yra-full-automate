@@ -18,6 +18,14 @@ on:
         description: "Also read this ONE listing with a filtered GET (name, stock, price; 1-3 requests)"
         required: false
         default: ""
+      product_opcs:
+        description: "Also read these catalogue products by OPC (comma-separated)"
+        required: false
+        default: ""
+      product_uids:
+        description: "Also read the products carrying these seller uids (comma-separated)"
+        required: false
+        default: ""
 
 concurrency:
   group: onbuy-api
@@ -40,6 +48,8 @@ jobs:
           SKUS: ${{ inputs.skus }}
           MAX_PAGES: ${{ inputs.max_pages }}
           LISTING_SKU: ${{ inputs.listing_sku }}
+          PRODUCT_OPCS: ${{ inputs.product_opcs }}
+          PRODUCT_UIDS: ${{ inputs.product_uids }}
           ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
           ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
           ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
