@@ -1,0 +1,43 @@
+name: Queue Entry Probe (read-only)
+
+# Pages OnBuy's queue history (GET /v2/queues, newest first) and prints what it still shows for the given SKUs - the real
+# outcome of a product create / content re-submit - and how far back the history reaches. Writes nothing anywhere.
+# Holds the onbuy-api group (up to MAX_PAGES GETs).
+
+on:
+  workflow_dispatch:
+    inputs:
+      skus:
+        description: "Comma-separated SKUs"
+        required: true
+      max_pages:
+        description: "Pages of 50 entries to read (120 = 120 GETs of the 240-an-hour quota)"
+        required: false
+        default: "120"
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Probe
+        env:
+          SKUS: ${{ inputs.skus }}
+          MAX_PAGES: ${{ inputs.max_pages }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: python queue_entry_probe.py
