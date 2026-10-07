@@ -16,6 +16,9 @@ Env:
   QUEUE_PAGES       pages of 50 queue entries read for the OPC check (default 8); ALLOW_UNVERIFIED_OPC=1 proceeds without a queue entry.
   MAX_RELINK        hard cap per run (default 2).
   ATTACH_RETRIES / ATTACH_WAIT   the SKU may stay reserved for a while after the delete (default 24 tries, 30 s apart).
+  VERIFY_RETRIES / VERIFY_WAIT   OnBuy's reads can lag a just-created listing by a minute or more (default 10 reads, 15 s apart).
+  FINISH_ONLY       1 = for a SKU whose attach already worked but whose verify/sheet step did not run: re-read until the listing shows on the
+                    stated OPC, verify it, write the sheet's OPC cell. Deletes and attaches nothing.
   ATTACH_ONLY       1 = resume mode for a SKU whose listing is already deleted (a previous run stopped between delete and attach): no delete,
                     the price comes from the sheet row; refused when the SKU still has a live listing.
 
@@ -56,6 +59,9 @@ MAX_RELINK = int(os.getenv("MAX_RELINK") or "2")
 ATTACH_RETRIES = int(os.getenv("ATTACH_RETRIES") or "24")
 ATTACH_WAIT = float(os.getenv("ATTACH_WAIT") or "30")
 ATTACH_ONLY = _flag("ATTACH_ONLY", "0")
+FINISH_ONLY = _flag("FINISH_ONLY", "0")
+VERIFY_RETRIES = int(os.getenv("VERIFY_RETRIES") or "10")
+VERIFY_WAIT = float(os.getenv("VERIFY_WAIT") or "15")
 
 OPC_RE = re.compile(r"^P[A-Z0-9]{4,10}$")
 
@@ -186,6 +192,18 @@ def read_listing(onbuy, sku):
     if len(hit) > 1:
         raise RuntimeError(f"{len(hit)} listings answer to SKU {sku} - refusing to guess")
     return hit[0] if hit else None
+
+
+def read_listing_patient(onbuy, sku, want_opc, sleep=time.sleep):
+    """Re-read until the listing shows on want_opc (a created listing can take a while to become readable); the last read otherwise."""
+    last = None
+    for attempt in range(max(1, VERIFY_RETRIES)):
+        last = read_listing(onbuy, sku)
+        if last and str(last.get("product_encoded_id") or last.get("opc") or "").strip().upper() == want_opc:
+            return last
+        if attempt + 1 < VERIFY_RETRIES:
+            sleep(VERIFY_WAIT)
+    return last
 
 
 def read_queue_entries(onbuy, skus, pages):
@@ -324,6 +342,28 @@ def write_opc(sheet, headers, sku, old_opc, new_opc):
 
 # ---------------------------------------------------------------- run
 
+def finish(onbuy, sheet, headers, by_sku, pairs):
+    """FINISH_ONLY: the attach already worked - verify the listing and record the new OPC on the sheet. Never deletes or attaches."""
+    for sku, new_opc in pairs:
+        row = by_sku.get(sku)
+        if not row or not row.get("title"):
+            raise SystemExit(f"{sku}: not on the sheet (or no title) - nothing recorded")
+        after = read_listing_patient(onbuy, sku, new_opc)
+        price = _num((after or {}).get("price")) or row.get("price") or 0
+        problems = verify_after(after, new_opc, price, row["title"], fit_title=onbuy._fit_product_name)
+        log.info("VERIFY %s: name=%r opc=%r stock=%r price=%r", sku, str((after or {}).get("name"))[:90],
+                 (after or {}).get("product_encoded_id"), (after or {}).get("stock"), (after or {}).get("price"))
+        if problems:
+            raise SystemExit(f"{sku}: problems: {'; '.join(problems)} - sheet NOT updated")
+        if DRY_RUN:
+            log.info("DRY RUN - would write %s into the OPC cell of row %s", new_opc, row.get("row"))
+            continue
+        if UPDATE_SHEET:
+            done, where = write_opc(sheet, headers, sku, str(row.get("opc") or "").strip().upper(), new_opc)
+            log.info("SHEET OPC %s: %s (%s)", sku, "updated" if done else "NOT updated", where)
+        log.info("FINISHED %s: on %s, stock 0", sku, new_opc)
+
+
 def main():
     try:
         pairs = parse_pairs(RELINK)
@@ -343,6 +383,9 @@ def main():
     sheet, headers, by_sku = read_sheet(book)
     queue = read_queue_entries(onbuy, [s for s, _ in pairs], QUEUE_PAGES) if QUEUE_PAGES > 0 else {}
 
+    if FINISH_ONLY:
+        finish(onbuy, sheet, headers, by_sku, pairs)
+        return
     plans = []
     for sku, new_opc in pairs:
         listing = read_listing(onbuy, sku)
@@ -375,7 +418,7 @@ def main():
         if not ok:
             raise SystemExit(f"{sku}: the old listing is deleted but the attach to {new_opc} failed ({text}) - the SKU has NO listing now; "
                              f"fix by attaching it to {new_opc} (price {price:.2f}, stock 0) and stop here")
-        after = read_listing(onbuy, sku)
+        after = read_listing_patient(onbuy, sku, new_opc)
         problems = verify_after(after, new_opc, price, p["title"], fit_title=onbuy._fit_product_name)
         log.info("VERIFY %s: name=%r opc=%r stock=%r price=%r", sku, str((after or {}).get("name"))[:90],
                  (after or {}).get("product_encoded_id"), (after or {}).get("stock"), (after or {}).get("price"))

@@ -319,3 +319,43 @@ def test_attach_only_refuses_a_sku_that_still_has_a_listing(monkeypatch):
     with pytest.raises(SystemExit):
         rl.main()
     assert "POST" not in onbuy.calls and "DELETE" not in onbuy.calls
+
+
+def test_the_verify_waits_for_a_created_listing_that_is_not_readable_yet(monkeypatch):
+    onbuy = FakeOnBuy(OLD, QUEUE)
+    sheet = _setup(monkeypatch, onbuy)
+    monkeypatch.setattr(rl, "VERIFY_WAIT", 0)
+    real_send, reads = onbuy._send, {"n": 0}
+
+    def lagging(method, url, **kw):
+        if method == "GET" and "POST" in onbuy.calls:           # after the attach the first two reads still find nothing
+            reads["n"] += 1
+            if reads["n"] <= 2:
+                return Resp(200, {"results": []})
+        return real_send(method, url, **kw)
+    onbuy._send = lagging
+    rl.main()
+    assert reads["n"] >= 3 and sheet.batches == [[{"range": "D3", "values": [["PXNEW01"]]}]]
+
+
+def test_finish_only_verifies_and_records_without_touching_the_listing(monkeypatch):
+    done = {"111111111111": {"sku": "111111111111", "name": "Right Product Title", "price": "67.05", "stock": 0, "product_encoded_id": "PXNEW01"}}
+    onbuy = FakeOnBuy(done, QUEUE)
+    sheet = _setup(monkeypatch, onbuy)
+    monkeypatch.setattr(rl, "FINISH_ONLY", True)
+    monkeypatch.setattr(rl, "VERIFY_WAIT", 0)
+    rl.main()
+    assert "DELETE" not in onbuy.calls and "POST" not in onbuy.calls
+    assert sheet.batches == [[{"range": "D3", "values": [["PXNEW01"]]}]]
+
+
+def test_finish_only_refuses_a_listing_that_is_not_on_the_stated_opc(monkeypatch):
+    other = {"111111111111": {"sku": "111111111111", "name": "Wrong Product", "price": "67.05", "stock": 0, "product_encoded_id": "PXOLD01"}}
+    onbuy = FakeOnBuy(other, QUEUE)
+    sheet = _setup(monkeypatch, onbuy)
+    monkeypatch.setattr(rl, "FINISH_ONLY", True)
+    monkeypatch.setattr(rl, "VERIFY_RETRIES", 2)
+    monkeypatch.setattr(rl, "VERIFY_WAIT", 0)
+    with pytest.raises(SystemExit):
+        rl.main()
+    assert sheet.batches == []
