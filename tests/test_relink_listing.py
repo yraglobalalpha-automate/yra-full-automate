@@ -94,12 +94,17 @@ class Resp:
 class FakeOnBuy:
     site_id, seller_id = "2000", "9"
 
-    def __init__(self, listings, queue, new_name="Right Product Title", attach_fail_times=0, attach_error="SKU already exists",
-                 delete_error=None, attach_forever=False):
+    def __init__(self, listings, queue, new_name="Right Product Title", attach_fail_times=0,
+                 attach_error="The SKU already exists for a different product",
+                 delete_error=None, attach_forever=False, failure_shape="message", delete_lag=0):
         self.listings = {k: dict(v) for k, v in listings.items()}
         self.queue, self.new_name = queue, new_name
         self.attach_fail_times, self.attach_error, self.attach_forever = attach_fail_times, attach_error, attach_forever
         self.delete_error = delete_error
+        # "message" = HTTP 200 + {"success": false, "message": ...} inside results (the real answer); "error" = HTTP 400 + an "error" key
+        self.failure_shape = failure_shape
+        self.delete_lag = delete_lag              # POST attempts that still fail because the deleted listing lingers
+        self.pending_delete = {}
         self.calls = []
 
     def authenticate(self):
@@ -121,15 +126,27 @@ class FakeOnBuy:
             sku = kw["json"]["skus"][0]
             if self.delete_error:
                 return Resp(200, {"results": {sku: {"error": self.delete_error}}})
-            self.listings.pop(sku, None)
+            if self.delete_lag:
+                self.pending_delete[sku] = self.delete_lag
+            else:
+                self.listings.pop(sku, None)
             return Resp(200, {"results": {sku: {"status": "ok"}}})
         item = kw["json"]["listings"][0]
-        if self.attach_forever or self.attach_fail_times > 0:
-            self.attach_fail_times -= 1
+        lingering = self.pending_delete.get(item["sku"], 0) > 0
+        if lingering:
+            self.pending_delete[item["sku"]] -= 1
+            if self.pending_delete[item["sku"]] == 0:
+                self.listings.pop(item["sku"], None)
+        if lingering or self.attach_forever or self.attach_fail_times > 0:
+            if not lingering:
+                self.attach_fail_times -= 1
+            if self.failure_shape == "message":
+                return Resp(200, {"success": True, "results": [{"success": False, "message": self.attach_error,
+                                                                 "sku": item["sku"], "opc": item["opc"]}]})
             return Resp(400, {"success": False, "results": [{"sku": item["sku"], "error": self.attach_error}]})
         self.listings[item["sku"]] = {"sku": item["sku"], "name": self.new_name, "price": str(item["price"]), "stock": item["stock"],
                                       "product_encoded_id": item["opc"]}
-        return Resp(200, {"success": True, "results": [{"sku": item["sku"], "product_listing_id": 1}]})
+        return Resp(200, {"success": True, "results": [{"success": True, "sku": item["sku"], "product_listing_id": 1}]})
 
 
 class FakeSheet:
@@ -184,7 +201,7 @@ def test_dry_run_reads_everything_and_writes_nothing(monkeypatch):
 
 
 def test_live_relink_deletes_attaches_with_retries_verifies_and_writes_the_new_opc(monkeypatch):
-    onbuy = FakeOnBuy(OLD, QUEUE, attach_fail_times=2)
+    onbuy = FakeOnBuy(OLD, QUEUE, attach_fail_times=2, failure_shape="error", attach_error="SKU already exists")
     sheet = _setup(monkeypatch, onbuy)
     rl.main()
     assert onbuy.calls.count("DELETE") == 1 and onbuy.calls.count("POST") == 3          # two "SKU already exists" answers, then ok
@@ -258,3 +275,47 @@ def test_two_skus_are_all_or_nothing_before_the_first_delete(monkeypatch):
     with pytest.raises(SystemExit):
         rl.main()
     assert "DELETE" not in onbuy.calls                          # nothing deleted although the first SKU alone was fine
+
+
+def test_item_failure_reads_the_real_answer_shapes():
+    msg = "The SKU already exists for a different product"
+    assert rl.item_failure({"success": False, "message": msg}) == msg
+    assert rl.item_failure({"error": "SKU does not exist"}) == "SKU does not exist"
+    assert rl.item_failure({"success": True, "sku": "1"}) == "" and rl.item_failure({"sku": "1"}) == "" and rl.item_failure(None) == ""
+    assert rl.item_failure({"success": False}) != ""
+
+
+def test_http_200_with_a_failed_item_is_never_taken_for_success(monkeypatch):
+    # the bug of 2026-10-07: OnBuy answered HTTP 200 + {"success": false, "message": ...} for the item and the run went on to verify a listing that was not there
+    onbuy = FakeOnBuy(OLD, QUEUE, attach_forever=True, attach_error="Invalid price")
+    ok, text = rl.attach_listing(onbuy, "111111111111", "PXNEW01", 67.05, sleep=lambda s: None)
+    assert not ok and "Invalid price" in text and onbuy.calls.count("POST") == 1
+
+
+def test_a_deleted_listing_that_lingers_is_waited_for_then_attached(monkeypatch):
+    onbuy = FakeOnBuy(OLD, QUEUE, delete_lag=3)                 # three attach attempts answer "already exists for a different product"
+    sheet = _setup(monkeypatch, onbuy)
+    rl.main()
+    assert onbuy.calls.count("POST") == 4
+    assert onbuy.listings["111111111111"]["product_encoded_id"] == "PXNEW01"
+    assert sheet.batches == [[{"range": "D3", "values": [["PXNEW01"]]}]]
+
+
+def test_attach_only_resumes_a_sku_whose_listing_is_already_gone(monkeypatch):
+    onbuy = FakeOnBuy({}, QUEUE)
+    sheet = _setup(monkeypatch, onbuy)
+    monkeypatch.setattr(rl, "ATTACH_ONLY", True)
+    rl.main()
+    assert "DELETE" not in onbuy.calls and onbuy.calls.count("POST") == 1
+    now = onbuy.listings["111111111111"]
+    assert now["product_encoded_id"] == "PXNEW01" and now["stock"] == 0 and now["price"] == "67.05"       # price from the sheet row
+    assert sheet.batches == [[{"range": "D3", "values": [["PXNEW01"]]}]]
+
+
+def test_attach_only_refuses_a_sku_that_still_has_a_listing(monkeypatch):
+    onbuy = FakeOnBuy(OLD, QUEUE)
+    _setup(monkeypatch, onbuy)
+    monkeypatch.setattr(rl, "ATTACH_ONLY", True)
+    with pytest.raises(SystemExit):
+        rl.main()
+    assert "POST" not in onbuy.calls and "DELETE" not in onbuy.calls

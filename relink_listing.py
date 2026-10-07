@@ -15,7 +15,9 @@ Env:
   SHEET_TAB         worksheet (default: the main product tab).
   QUEUE_PAGES       pages of 50 queue entries read for the OPC check (default 8); ALLOW_UNVERIFIED_OPC=1 proceeds without a queue entry.
   MAX_RELINK        hard cap per run (default 2).
-  ATTACH_RETRIES / ATTACH_WAIT   the SKU may take a moment to free up after the delete (default 8 tries, 20 s apart).
+  ATTACH_RETRIES / ATTACH_WAIT   the SKU may stay reserved for a while after the delete (default 24 tries, 30 s apart).
+  ATTACH_ONLY       1 = resume mode for a SKU whose listing is already deleted (a previous run stopped between delete and attach): no delete,
+                    the price comes from the sheet row; refused when the SKU still has a live listing.
 
 Safety: a listing is only deleted when it exists, sits on a DIFFERENT OPC than the target, and shows stock 0 (never a sellable one); the
 new listing is attached at stock 0 with the old listing's own price (the sync or the team restocks it once the page is checked). SKUs are
@@ -51,8 +53,9 @@ RELINK = (os.getenv("RELINK") or "").strip()
 BLOCKED_SKUS = {s.strip() for s in (os.getenv("BLOCKED_SKUS") or "").split(",") if s.strip()}
 QUEUE_PAGES = int(os.getenv("QUEUE_PAGES") or "8")
 MAX_RELINK = int(os.getenv("MAX_RELINK") or "2")
-ATTACH_RETRIES = int(os.getenv("ATTACH_RETRIES") or "8")
-ATTACH_WAIT = float(os.getenv("ATTACH_WAIT") or "20")
+ATTACH_RETRIES = int(os.getenv("ATTACH_RETRIES") or "24")
+ATTACH_WAIT = float(os.getenv("ATTACH_WAIT") or "30")
+ATTACH_ONLY = _flag("ATTACH_ONLY", "0")
 
 OPC_RE = re.compile(r"^P[A-Z0-9]{4,10}$")
 
@@ -83,25 +86,33 @@ def _num(value, default=0.0):
         return default
 
 
-def decide(sku, new_opc, listing, row, queue_entry, blocked, allow_unverified=False):
+def decide(sku, new_opc, listing, row, queue_entry, blocked, allow_unverified=False, attach_only=False):
     """Pure plan for ONE SKU. listing: the live OnBuy record (dict) or None; row: {"row", "title", "price", "opc"} or None;
     queue_entry: the newest queue entry for the SKU ({"status","opc"}) or None. -> {"go": bool, "reason": str, ...}"""
     out = {"sku": sku, "new_opc": new_opc, "go": False, "reason": ""}
     if sku in blocked:
         out["reason"] = "blocked (BLOCKED_SKUS - e.g. an open order)"
         return out
-    if not listing:
-        out["reason"] = "no live listing found for this SKU - nothing to relink"
-        return out
-    old_opc = str(listing.get("product_encoded_id") or listing.get("opc") or "").strip().upper()
-    out["old_opc"] = old_opc
-    if old_opc == new_opc:
-        out["reason"] = "the listing is already on the target product"
-        return out
-    stock = _num(listing.get("stock"), -1)
-    if stock != 0:
-        out["reason"] = f"the listing still shows stock {listing.get('stock')!r} - never delete a sellable listing (zero it first)"
-        return out
+    if attach_only:
+        if listing:
+            out["reason"] = ("the SKU still has a live listing - ATTACH_ONLY is only for a SKU whose listing is already deleted "
+                             "(use the normal relink)")
+            return out
+        old_opc = str((row or {}).get("opc") or "").strip().upper()
+        out["old_opc"] = old_opc
+    else:
+        if not listing:
+            out["reason"] = "no live listing found for this SKU - nothing to relink"
+            return out
+        old_opc = str(listing.get("product_encoded_id") or listing.get("opc") or "").strip().upper()
+        out["old_opc"] = old_opc
+        if old_opc == new_opc:
+            out["reason"] = "the listing is already on the target product"
+            return out
+        stock = _num(listing.get("stock"), -1)
+        if stock != 0:
+            out["reason"] = f"the listing still shows stock {listing.get('stock')!r} - never delete a sellable listing (zero it first)"
+            return out
     if not row:
         out["reason"] = "SKU not found on the sheet"
         return out
@@ -123,7 +134,7 @@ def decide(sku, new_opc, listing, row, queue_entry, blocked, allow_unverified=Fa
         if str(queue_entry.get("opc") or "").strip().upper() != new_opc:
             out["reason"] = f"the queue says this SKU's product is {queue_entry.get('opc')}, not {new_opc}"
             return out
-    price = _num(listing.get("price"))
+    price = _num((listing or {}).get("price"))
     if price <= 0:
         price = _num(row.get("price"))
     if price <= 0:
@@ -228,6 +239,18 @@ def delete_listing(onbuy, sku):
     return err or f"no answer (HTTP {resp.status_code}: {resp.text[:120]})"
 
 
+def item_failure(item):
+    """Failure text of ONE per-item answer. OnBuy answers HTTP 200 and a top-level success=true even when the item itself failed:
+    {"success": false, "message": "The SKU already exists for a different product", ...} (seen 2026-10-07), or carries an "error" key."""
+    if not isinstance(item, dict):
+        return ""
+    if str(item.get("error") or "").strip():
+        return str(item["error"]).strip()
+    if item.get("success") is False:
+        return str(item.get("message") or "item failed without a message").strip()
+    return ""
+
+
 def attach_listing(onbuy, sku, opc, price, sleep=time.sleep):
     """POST /listings: the SKU onto the right OPC at stock 0. Retries while the SKU is still being freed. -> (ok, text)"""
     wire = sku_aliases.to_onbuy(sku)
@@ -243,9 +266,9 @@ def attach_listing(onbuy, sku, opc, price, sleep=time.sleep):
             item = next((r for r in results if isinstance(r, dict) and str(r.get("sku") or "") == wire), results[0] if len(results) == 1 else None)
         elif isinstance(results, dict):
             item = results.get(wire)
-        err = str((item or {}).get("error") or "").strip() if isinstance(item, dict) else ""
+        err = item_failure(item)
         log.info("attach %s attempt %d: HTTP %s %s", sku, attempt, resp.status_code, (err or resp.text[:160]))
-        if resp.status_code < 300 and not err:
+        if resp.status_code < 300 and not err and isinstance(item, dict):
             return True, "ok"
         last = err or f"HTTP {resp.status_code}: {resp.text[:160]}"
         low = last.lower()
@@ -254,7 +277,7 @@ def attach_listing(onbuy, sku, opc, price, sleep=time.sleep):
             current = read_listing(onbuy, sku)
             if current and str(current.get("product_encoded_id") or "").strip().upper() == opc:
                 return True, "already attached"
-        elif not (resp.status_code in (429, 500, 502, 503) or "try again" in low or "queue" in low):
+        elif not (resp.status_code in (429, 500, 502, 503) or "try again" in low or "queue" in low or "process" in low):
             return False, last
         sleep(ATTACH_WAIT)
     return False, last
@@ -323,7 +346,7 @@ def main():
     plans = []
     for sku, new_opc in pairs:
         listing = read_listing(onbuy, sku)
-        plan = decide(sku, new_opc, listing, by_sku.get(sku), queue.get(sku), BLOCKED_SKUS, ALLOW_UNVERIFIED_OPC)
+        plan = decide(sku, new_opc, listing, by_sku.get(sku), queue.get(sku), BLOCKED_SKUS, ALLOW_UNVERIFIED_OPC, ATTACH_ONLY)
         plan["listing"] = listing
         plans.append(plan)
         shown = (f"on {plan.get('old_opc')} -> {new_opc}, price {plan.get('price')}, sheet row {plan.get('row')}" if plan["go"] else plan["reason"])
@@ -340,10 +363,13 @@ def main():
 
     for p in plans:
         sku, new_opc, price = p["sku"], p["new_opc"], p["price"]
-        outcome = delete_listing(onbuy, sku)
-        log.info("DELETE %s: %s", sku, outcome)
-        if outcome not in ("ok", "gone"):
-            raise SystemExit(f"{sku}: delete refused ({outcome}) - stopped, nothing else touched")
+        if ATTACH_ONLY:
+            log.info("DELETE %s: skipped (ATTACH_ONLY - the listing is already gone)", sku)
+        else:
+            outcome = delete_listing(onbuy, sku)
+            log.info("DELETE %s: %s", sku, outcome)
+            if outcome not in ("ok", "gone"):
+                raise SystemExit(f"{sku}: delete refused ({outcome}) - stopped, nothing else touched")
         ok, text = attach_listing(onbuy, sku, new_opc, price)
         log.info("ATTACH %s -> %s: %s (%s)", sku, new_opc, "ok" if ok else "FAILED", text)
         if not ok:
