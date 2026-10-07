@@ -17,6 +17,10 @@ on:
         description: "yes = also print the sheet rows whose price would rise by more than 5% (feed for a targeted sync run)"
         required: false
         default: ""
+      list_manual:
+        description: "yes = also list the Amazon rows whose price is kept as a person's (prices only)"
+        required: false
+        default: ""
 
 jobs:
   probe:
@@ -39,4 +43,5 @@ jobs:
           SHEET_TAB: ${{ inputs.tab }}
           ROWS: ${{ inputs.rows }}
           LIST_UP: ${{ inputs.list_up }}
+          LIST_MANUAL: ${{ inputs.list_manual }}
         run: python pricing_probe.py

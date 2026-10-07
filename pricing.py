@@ -38,15 +38,40 @@ the automation set under a SUPERSEDED schedule follows the formula down
 
 import os
 
-# What OnBuy actually deducts runs ABOVE the tier's nominal rate (user
-# observation 2026-09-17: a 7% category deducted 8.4%, a 15% one 16.5%) -
-# the platform charges on top of the listed commission. Policy: add 1.5
-# percentage points to EVERY commission rate the formula divides by, flat
-# fallback included, so the retained amount survives the real deduction.
-# FeeRule keeps the nominal rate (it mirrors OnBuy's own tier data); the
-# uplift is applied only where fees are COMPUTED, so Fee % columns show
-# the real effective rate (e.g. 16.50, not 15.00).
-FEE_UPLIFT_PERCENT = float(os.getenv("FEE_UPLIFT_PERCENT") or "1.5")
+# What OnBuy actually deducts runs ABOVE the tier's nominal rate: it charges
+# 20% VAT on its own commission and takes both out of the sale. Read off the
+# order records (GET /v2/orders, 2026-10-07): `sales_fee_ex_VAT` is exactly
+# the listed rate x the price (15% -> 10.78 on a 71.84 sale, 7% -> 6.82 on
+# 97.41) and `sales_fee_inc_VAT` is exactly that x 1.2 (12.94 and 8.18) - so
+# a 15% category really costs 18% of the price, a 7% one 8.4%, a 20% one 24%.
+# (The first policy, 2026-09-17, added a flat 1.5 points to every rate: right
+# for 7% by accident, 1.5 points short for the common 15% category.)
+# FeeRule keeps the nominal rate (it mirrors OnBuy's own tier data); the VAT
+# is applied only where fees are COMPUTED, so the Fee % columns show the real
+# effective rate (18.00 for a 15% category, not 15.00 or the old 16.50).
+FEE_VAT_PERCENT = float(os.getenv("FEE_VAT_PERCENT") or "20")
+# Extra points on top of the VAT-inclusive rate - a spare knob, 0 by default.
+FEE_UPLIFT_PERCENT = float(os.getenv("FEE_UPLIFT_PERCENT") or "0")
+# The model in force 2026-09-17 .. 2026-10-07 (nominal + 1.5 points). Kept so a
+# price the automation set under it is still recognised as its own
+# (generate_xml._formula_priced) and a Fee % cell it wrote still reads as its own.
+LEGACY_FEE_UPLIFT_PERCENT = 1.5
+
+
+def effective_rate(nominal_pct, legacy=False):
+    """The share of the selling price OnBuy deducts for a listed commission
+    of `nominal_pct` percent (legacy=True: the 2026-09-17 model, nominal + 1.5)."""
+    nominal_pct = float(nominal_pct)
+    if legacy:
+        return nominal_pct + LEGACY_FEE_UPLIFT_PERCENT
+    return nominal_pct * (1.0 + FEE_VAT_PERCENT / 100.0) + FEE_UPLIFT_PERCENT
+
+
+def effective_min_fee(rule, legacy=False):
+    """The per-sale minimum commission as OnBuy deducts it (VAT on it too)."""
+    if not rule.min_fee:
+        return 0.0
+    return rule.min_fee if legacy else rule.min_fee * (1.0 + FEE_VAT_PERCENT / 100.0)
 
 MIN_PROFIT_PERCENT = 20
 # The flat assumption the formula grew up with. OnBuy's real commission is
@@ -144,37 +169,37 @@ class FeeRule:
         return f"FeeRule({self.name}: {self.lower_pct:g}%)"
 
 
-def fee_amount(price, rule=None, mode=None):
+def fee_amount(price, rule=None, mode=None, legacy=False):
     """What OnBuy takes on a sale at `price` under the rule (the flat
-    default when rule is None)."""
+    default when rule is None) - commission plus the VAT on it."""
     if price <= 0:
         return 0.0
     if rule is None:
-        return price * (PLATFORM_FEE_PERCENT + FEE_UPLIFT_PERCENT) / 100.0
+        return price * effective_rate(PLATFORM_FEE_PERCENT, legacy) / 100.0
     mode = (mode or FEE_TIER_MODE)
-    r1 = (rule.lower_pct + FEE_UPLIFT_PERCENT) / 100.0
+    r1 = effective_rate(rule.lower_pct, legacy) / 100.0
     if not rule.tiered or price <= rule.threshold:
         fee = price * r1
     elif mode == "step":
-        fee = price * (rule.upper_pct + FEE_UPLIFT_PERCENT) / 100.0
+        fee = price * effective_rate(rule.upper_pct, legacy) / 100.0
     else:
-        fee = rule.threshold * r1 + (price - rule.threshold) * (rule.upper_pct + FEE_UPLIFT_PERCENT) / 100.0
-    return max(fee, rule.min_fee)
+        fee = rule.threshold * r1 + (price - rule.threshold) * effective_rate(rule.upper_pct, legacy) / 100.0
+    return max(fee, effective_min_fee(rule, legacy))
 
 
-def price_for_retained(retained, rule=None, mode=None):
+def price_for_retained(retained, rule=None, mode=None, legacy=False):
     """The lowest price that leaves `retained` after OnBuy's commission -
     the fee-as-divisor algebra of the module docstring, extended to a
     tiered rule and to the minimum fee."""
     if retained <= 0:
         return 0.0
     if rule is None:
-        return retained / (1 - (PLATFORM_FEE_PERCENT + FEE_UPLIFT_PERCENT) / 100.0)
+        return retained / (1 - effective_rate(PLATFORM_FEE_PERCENT, legacy) / 100.0)
     mode = (mode or FEE_TIER_MODE)
-    r1 = (rule.lower_pct + FEE_UPLIFT_PERCENT) / 100.0
+    r1 = effective_rate(rule.lower_pct, legacy) / 100.0
     price = retained / (1 - r1)
     if rule.tiered and price > rule.threshold:
-        r2 = (rule.upper_pct + FEE_UPLIFT_PERCENT) / 100.0
+        r2 = effective_rate(rule.upper_pct, legacy) / 100.0
         if mode == "step":
             above = retained / (1 - r2)
             # A falling tier (20% then 5%) can leave a gap where no price is
@@ -189,8 +214,9 @@ def price_for_retained(retained, rule=None, mode=None):
     # and the price that leaves `retained` after a flat GBP fee is simply
     # retained + min_fee. (fee_amount clamps to the min, so compare the raw
     # gap, not fee_amount's result.)
-    if rule.min_fee and (price - retained) < rule.min_fee:
-        price = retained + rule.min_fee
+    _min_fee = effective_min_fee(rule, legacy)
+    if _min_fee and (price - retained) < _min_fee:
+        price = retained + _min_fee
     return price
 
 
@@ -204,16 +230,16 @@ def price_for_margin_of_price(base_cost, margin_pct, rule=None, mode=None):
         return None
     m = margin_pct / 100.0
     if rule is None:
-        denom = 1 - (PLATFORM_FEE_PERCENT + FEE_UPLIFT_PERCENT) / 100.0 - m
+        denom = 1 - effective_rate(PLATFORM_FEE_PERCENT) / 100.0 - m
         return base_cost / denom if denom > 0.02 else None
     mode = (mode or FEE_TIER_MODE)
-    r1 = (rule.lower_pct + FEE_UPLIFT_PERCENT) / 100.0
+    r1 = effective_rate(rule.lower_pct) / 100.0
     d1 = 1 - r1 - m
     if d1 <= 0.02:
         return None
     price = base_cost / d1
     if rule.tiered and price > rule.threshold:
-        r2 = (rule.upper_pct + FEE_UPLIFT_PERCENT) / 100.0
+        r2 = effective_rate(rule.upper_pct) / 100.0
         d2 = 1 - r2 - m
         if d2 <= 0.02:
             return None
@@ -225,27 +251,44 @@ def price_for_margin_of_price(base_cost, margin_pct, rule=None, mode=None):
             price = (base_cost + rule.threshold * (r1 - r2)) / d2
     # If the percentage fee this price implies is under the rule's minimum
     # fee, the flat minimum binds instead: S - min_fee - base >= m*S.
-    if rule.min_fee and (price * (1 - m) - base_cost) < rule.min_fee:
-        price = (base_cost + rule.min_fee) / (1 - m)
+    _min_fee = effective_min_fee(rule)
+    if _min_fee and (price * (1 - m) - base_cost) < _min_fee:
+        price = (base_cost + _min_fee) / (1 - m)
     return price
 
 
-def price_for_profit(total_cost, profit_pct, rule=None, platform_fee_percent=None):
-    """Price that retains total_cost x (1 + profit%) after commission."""
+def price_for_profit(total_cost, profit_pct, rule=None, platform_fee_percent=None, legacy=False):
+    """Price that retains total_cost x (1 + profit%) after commission.
+    `platform_fee_percent` is a LISTED commission rate (a typed Fee % cell, the
+    flat 20): the VAT OnBuy adds to it is applied here, like for a rule's rates."""
     if total_cost <= 0:
         return 0.0
     retained = total_cost * (1 + profit_pct / 100.0)
     if rule is not None and platform_fee_percent is None:
-        return round(price_for_retained(retained, rule), 2)
-    fee = min(max(float(PLATFORM_FEE_PERCENT if platform_fee_percent is None else platform_fee_percent) + FEE_UPLIFT_PERCENT, 0.0), 95.0) / 100.0
+        return round(price_for_retained(retained, rule, legacy=legacy), 2)
+    fee = min(max(effective_rate(PLATFORM_FEE_PERCENT if platform_fee_percent is None else platform_fee_percent, legacy), 0.0), 95.0) / 100.0
     return round(retained / (1 - fee), 2)
 
 
-def effective_fee_percent(price, rule=None):
-    """The commission as a share of the price - what "Fee %" records."""
+def effective_fee_percent(price, rule=None, legacy=False):
+    """The commission (VAT included) as a share of the price - what "Fee %" records."""
     if price <= 0:
         return 0.0
-    return fee_amount(price, rule) / price * 100.0
+    return fee_amount(price, rule, legacy=legacy) / price * 100.0
+
+
+def effective_profit_percent(price, total_cost, rule=None, platform_fee_percent=None, legacy=False):
+    """The profit a sale at `price` leaves as a share of the cost base (cost + shipping), after OnBuy's commission (VAT
+    included) - the inverse of price_for_profit, and what the Profit % cell shows for a price a person set above the
+    formula. `rule` / `platform_fee_percent` pick the fee exactly as price_for_profit does."""
+    if price <= 0 or total_cost <= 0:
+        return 0.0
+    if rule is not None and platform_fee_percent is None:
+        fee = fee_amount(price, rule, legacy=legacy)
+    else:
+        rate = PLATFORM_FEE_PERCENT if platform_fee_percent is None else platform_fee_percent
+        fee = price * min(max(effective_rate(rate, legacy), 0.0), 95.0) / 100.0
+    return ((price - fee) / total_cost - 1.0) * 100.0
 
 
 def calculate_selling_price(
@@ -255,6 +298,7 @@ def calculate_selling_price(
     min_profit_percent=MIN_PROFIT_PERCENT,
     platform_fee_percent=None,
     fee_rule=None,
+    legacy=False,
 ):
     """The range's profit on cost + shipping, retained after OnBuy's
     commission: the category's real tier when fee_rule is given, else the
@@ -265,10 +309,10 @@ def calculate_selling_price(
     total_cost = cost_price + shipping_cost
     retained = total_cost * (1 + profit_percent(total_cost) / 100)
     if fee_rule is not None and platform_fee_percent is None:
-        return round(price_for_retained(retained, fee_rule), 2)
+        return round(price_for_retained(retained, fee_rule, legacy=legacy), 2)
     # The fee is a DIVISOR, never a markup - see the module docstring. The
     # clamp keeps a nonsense override (>= 100% commission) from inverting
     # the price or dividing by zero mid-run; 95% is already far outside any
     # real OnBuy category.
-    fee = min(max(float(PLATFORM_FEE_PERCENT if platform_fee_percent is None else platform_fee_percent) + FEE_UPLIFT_PERCENT, 0.0), 95.0) / 100.0
+    fee = min(max(effective_rate(PLATFORM_FEE_PERCENT if platform_fee_percent is None else platform_fee_percent, legacy), 0.0), 95.0) / 100.0
     return round(retained / (1 - fee), 2)

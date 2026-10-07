@@ -343,25 +343,32 @@ def _to_float(value):
 def _formula_priced(price, cost, ship, fee_rule, profit_override=None, fee_override=None):
     """True when `price` is what our formula would have set at this cost -
     under the flat 20% model, the category tier, or the row's own
-    percentage overrides - i.e. the automation set it, not a person."""
+    percentage overrides - i.e. the automation set it, not a person. Both
+    fee models count: the current one (commission plus the VAT OnBuy adds to
+    it) and the one in force 2026-09-17 .. 2026-10-07 (commission + 1.5
+    points), so a price written yesterday is still the automation's own today."""
     if price <= 0 or cost <= 0:
         return False
     total = cost + ship
-    candidates = [pricing.calculate_selling_price(cost, ship, platform_fee_percent=pricing.PLATFORM_FEE_PERCENT)]
-    if fee_rule is not None:
-        candidates.append(pricing.calculate_selling_price(cost, ship, fee_rule=fee_rule))
-    # Prices set under a band schedule that has since changed (e.g. the
-    # above-GBP-100 profit cut, 2026-09-11) are still the automation's own.
-    for _legacy in pricing.legacy_profit_percents(total):
-        candidates.append(pricing.price_for_profit(total, _legacy, platform_fee_percent=pricing.PLATFORM_FEE_PERCENT))
+    candidates = []
+    for _legacy in (False, True):
+        candidates.append(pricing.calculate_selling_price(cost, ship, platform_fee_percent=pricing.PLATFORM_FEE_PERCENT,
+                                                          legacy=_legacy))
         if fee_rule is not None:
-            candidates.append(pricing.price_for_profit(total, _legacy, rule=fee_rule))
-    if profit_override is not None or fee_override is not None:
-        profit = profit_override if profit_override is not None else pricing.profit_percent(total)
-        if fee_override is not None:
-            candidates.append(pricing.price_for_profit(total, profit, platform_fee_percent=fee_override))
-        else:
-            candidates.append(pricing.price_for_profit(total, profit, rule=fee_rule))
+            candidates.append(pricing.calculate_selling_price(cost, ship, fee_rule=fee_rule, legacy=_legacy))
+        # Prices set under a band schedule that has since changed (e.g. the
+        # above-GBP-100 profit cut, 2026-09-11) are still the automation's own.
+        for _old in pricing.legacy_profit_percents(total):
+            candidates.append(pricing.price_for_profit(total, _old, platform_fee_percent=pricing.PLATFORM_FEE_PERCENT,
+                                                       legacy=_legacy))
+            if fee_rule is not None:
+                candidates.append(pricing.price_for_profit(total, _old, rule=fee_rule, legacy=_legacy))
+        if profit_override is not None or fee_override is not None:
+            profit = profit_override if profit_override is not None else pricing.profit_percent(total)
+            if fee_override is not None:
+                candidates.append(pricing.price_for_profit(total, profit, platform_fee_percent=fee_override, legacy=_legacy))
+            else:
+                candidates.append(pricing.price_for_profit(total, profit, rule=fee_rule, legacy=_legacy))
     return any(abs(c - price) < 0.011 for c in candidates)
 
 
@@ -408,21 +415,24 @@ def resolve_pct_cell(cell, auto_values, mirror, hi=100):
 
 def _fee_cell_auto_values(fee_rule, price):
     """Every Fee % the automation itself puts in the cell for this row: the
-    category's nominal rates (what it showed before the 1.5-point uplift),
-    those rates plus the uplift (what it shows now), and the effective rate
-    at the row's current price (a tiered category blends its two rates, a
-    very cheap item pays the minimum fee). Anything else typed there is a
-    person's override."""
+    category's nominal rates (what it showed before any uplift), those rates
+    as it shows them now (commission plus the VAT OnBuy adds: 15 -> 18.00) and
+    as it showed them 2026-09-17 .. 2026-10-07 (nominal + 1.5: 16.50), and the
+    effective rate at the row's current price under either model (a tiered
+    category blends its two rates, a very cheap item pays the minimum fee).
+    Anything else typed there is a person's override."""
     if fee_rule is not None:
         nominal = [fee_rule.lower_pct] + ([fee_rule.upper_pct] if fee_rule.upper_pct is not None else [])
     else:
         nominal = [float(pricing.PLATFORM_FEE_PERCENT)]
-    values = nominal + [v + pricing.FEE_UPLIFT_PERCENT for v in nominal]
-    # ...and the flat fallback's own display (20 + the uplift): a row that was priced flat and categorised later
-    # still shows it, and nobody types 21.5 by hand.
-    values.append(float(pricing.PLATFORM_FEE_PERCENT) + pricing.FEE_UPLIFT_PERCENT)
-    if price and price > 0:
-        values.append(pricing.effective_fee_percent(price, fee_rule))
+    values = list(nominal)
+    for _legacy in (False, True):
+        values += [pricing.effective_rate(v, legacy=_legacy) for v in nominal]
+        # ...and the flat fallback's own display (20 -> 24.00, or 21.50 then): a row that was priced flat and
+        # categorised later still shows it, and nobody types it by hand.
+        values.append(pricing.effective_rate(float(pricing.PLATFORM_FEE_PERCENT), legacy=_legacy))
+        if price and price > 0:
+            values.append(pricing.effective_fee_percent(price, fee_rule, legacy=_legacy))
     return values
 
 
@@ -444,19 +454,114 @@ def _misread_fee_priced(price, cost, ship, fee_cell, profit_override=None):
         profits = [profit_override]
     else:
         profits = [pricing.profit_percent(total)] + list(pricing.legacy_profit_percents(total))
-    return any(abs(pricing.price_for_profit(total, p, platform_fee_percent=fee_cell) - price) < 0.011
+    # The misread priced under the fee model of its time (cell + 1.5 points), so it is recognised under that one.
+    return any(abs(pricing.price_for_profit(total, p, platform_fee_percent=fee_cell, legacy=True) - price) < 0.011
                for p in profits)
 
 
-def decide_price(*, supplier, cost_price, shipping_cost, fee_rule, existing_price, fee_cell, profit_cell, prev):
+def _pct_text(value):
+    """A percentage as the sheet shows it: two decimals ("20.00"), more only where the value needs them."""
+    whole, _, frac = f"{value:.6f}".rstrip("0").partition(".")
+    return f"{whole}.{frac.ljust(2, '0')}"
+
+
+def _shown_profit(price, total_cost, fee_rule, fee_override):
+    """The Profit % to show for a price above the formula (user 2026-10-07): the profit that price REALLY earns after
+    OnBuy's commission, to as many decimals as it takes for the cell to price back to exactly that price (two
+    normally) - so even a cell that were ever read as a typed override would reproduce the price to the penny."""
+    exact = pricing.effective_profit_percent(price, total_cost, fee_rule, platform_fee_percent=fee_override)
+    for digits in (2, 3, 4, 5, 6):
+        shown = round(exact, digits)
+        if abs(pricing.price_for_profit(total_cost, shown, rule=fee_rule, platform_fee_percent=fee_override) - price) < 0.005:
+            return shown
+    return round(exact, 6)
+
+
+def _cell_number(value):
+    """A sheet cell as a number ("89.99", "£89.99", "1,250.50", "89,99", 89.99), or None when it is blank or not a number."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value if value is not None else "").replace("£", "").replace("%", "").replace(" ", "").strip()
+    if not s:
+        return None
+    if re.fullmatch(r"\d+,\d{1,2}", s):          # "89,99": a decimal comma
+        s = s.replace(",", ".")
+    try:
+        return float(s.replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _cells_differ(a, b):
+    """True when two cell values are different numbers (or different text); blank equals blank."""
+    na, nb = _cell_number(a), _cell_number(b)
+    if na is not None and nb is not None:
+        return abs(na - nb) > 0.0049
+    return str(a if a is not None else "").strip() != str(b if b is not None else "").strip()
+
+
+def drop_edited_cells(updates, guarded, snap_sku, snap_value, fresh_sku, fresh_value):
+    """The run flushes ALL its sheet writes in one sweep at the very end, and an
+    Amazon run lasts an hour or more - so a price (or a Profit % / Fee %
+    override) typed into the sheet WHILE a run was in progress was written over
+    with the value the run had worked out from its start-of-run snapshot (the
+    user's manual price "overwriting again and again", 2026-10-07). This drops
+    every write to a guarded column whose cell no longer holds what the run
+    read at its start: somebody edited it, and the edit wins.
+
+    updates: [{"range": "AB123", "values": [[v]]}], row numbers as of the
+    snapshot. guarded: {column letters: column name}. snap_sku: the SKU column
+    at run start (index 0 = row 1). snap_value(name, row) / fresh_value(name,
+    row): the cell as read at run start / now (row = the row the SKU has NOW for
+    fresh_value). Returns (kept, dropped): dropped = [(sku, column name, the
+    cell's current value)]. A write whose SKU moved or is duplicated is kept
+    here - _remap_row_writes decides about it."""
+    pos = {}
+    for _idx, _val in enumerate(fresh_sku):
+        _key = str(_val).replace(",", "").strip()
+        if _idx and _key:
+            pos.setdefault(_key, []).append(_idx + 1)
+    kept, dropped = [], []
+    for _u in updates:
+        _rng = str(_u["range"])
+        _head = _rng.rstrip("0123456789")
+        _name = guarded.get(_head)
+        try:
+            _row_n = int(_rng[len(_head):])
+        except ValueError:
+            _row_n = 0
+        if _name is None or _row_n <= 0:
+            kept.append(_u)
+            continue
+        _sku = str(snap_sku[_row_n - 1]).replace(",", "").strip() if _row_n - 1 < len(snap_sku) else ""
+        _where = pos.get(_sku) or []
+        if not _sku or len(_where) != 1:
+            kept.append(_u)
+            continue
+        _now = fresh_value(_name, _where[0])
+        if _cells_differ(snap_value(_name, _row_n), _now):
+            dropped.append((_sku, _name, _now))
+            continue
+        kept.append(_u)
+    return kept, dropped
+
+
+def decide_price(*, supplier, cost_price, shipping_cost, fee_rule, existing_price, fee_cell, profit_cell, prev,
+                 sheet_cost=0.0, sheet_ship=0.0, prev_fee_rule=None):
     """The row's selling price and how it was reached - the pricing block of
     the sync loop, pulled out so it can be tested. `prev` is what the
     Supabase mirror last saw for the SKU. Returns a dict: band_now,
     profit_override and fee_override (the percentages in play), formula_price,
     selling_price, how ("amazon" = re-derived from the current cost both ways,
     "follows" = a price the automation set followed the formula DOWN, "kept" =
-    max(existing, formula)) and misread (the existing price came from the Fee %
-    misread of 2026-09-17..10-02)."""
+    max(existing, formula), "manual" = an Amazon row whose price a person raised
+    above the formula, kept) and misread (the existing price came from the Fee %
+    misread of 2026-09-17..10-02), and profit_shown (the Profit % to write). sheet_cost / sheet_ship are the row's own Cost /
+    Shipping cells (written in the same batch as the price, so they name the cost
+    the price was set at even when the mirror is missing); prev_fee_rule is the
+    rule of the category the mirror last saw (a price set before a recategorisation)."""
     total_cost = cost_price + shipping_cost
     prev_cost, prev_ship = _to_float(prev.get("Cost Price (£)")), _to_float(prev.get("Shipping Cost (£)"))
     # Fee % / Profit % cells: normally the automation's own report, but
@@ -494,29 +599,49 @@ def decide_price(*, supplier, cost_price, shipping_cost, fee_rule, existing_pric
     misread = (fee_override is None and fee_typed is not None
                and (_misread_fee_priced(existing_price, cost_price, shipping_cost, fee_typed, profit_override)
                     or _misread_fee_priced(existing_price, prev_cost, prev_ship, fee_typed, profit_override)))
-    automation_set = (_formula_priced(existing_price, cost_price, shipping_cost, fee_rule,
-                                      profit_override, fee_override)
-                      or _formula_priced(existing_price, prev_cost, prev_ship, fee_rule,
-                                         profit_override, fee_override)
-                      or misread)
+    # The costs (and category rules) the current price may have been set under: the one just fetched, the mirror's
+    # last-seen cost, and the cost cell the sheet carries - each under this row's rule and the previous category's.
+    _cost_bases = [(cost_price, shipping_cost), (prev_cost, prev_ship)]
+    if sheet_cost and sheet_cost > 0:
+        _cost_bases.append((sheet_cost, sheet_ship))
+    _rules = [fee_rule] + ([prev_fee_rule] if prev_fee_rule is not None and prev_fee_rule is not fee_rule else [])
+    automation_set = misread or any(
+        _formula_priced(existing_price, _c, _s, _r, profit_override, fee_override)
+        for _c, _s in _cost_bases for _r in _rules)
     reprice_basis = (fee_rule is not None or profit_override is not None or fee_override is not None
                      or bool(pricing.legacy_profit_percents(total_cost)) or misread)
     if supplier == "Amazon" and formula_price > 0:
-        # Amazon rows always re-derive from the CURRENT fetched cost
-        # - down as well as up (user policy 2026-09-18). The tab is
-        # priced by the automation alone, so when Amazon's price
-        # drops the selling price follows it instead of ratcheting
-        # at max(); the never-lower rule still protects the eBay
-        # tab, where prices are sometimes set by hand. Profit %/
-        # Fee % cell overrides still drive the formula itself, and
-        # a row whose fetch failed never reaches this line.
-        how, selling_price = "amazon", formula_price
+        # Amazon rows re-derive from the CURRENT fetched cost - down as
+        # well as up (user policy 2026-09-18): a price the automation set
+        # follows Amazon's price instead of ratcheting at max(). But a price
+        # a PERSON raised above the formula is theirs (user 2026-10-07: "the
+        # manual increase is overwritten again and again"): a price above
+        # the formula that no formula produced - at the fetched cost, the
+        # mirror's, the sheet's own cost cell, under either fee model or
+        # either category - is kept as a floor, exactly like the eBay tab.
+        # It lasts until the formula overtakes it (cost rises) or the cell is
+        # lowered / cleared. Profit % / Fee % cell overrides still drive the
+        # formula itself, and a row whose fetch failed never reaches this line.
+        if existing_price > formula_price + 0.011 and not automation_set:
+            how, selling_price = "manual", existing_price
+        else:
+            how, selling_price = "amazon", formula_price
     elif reprice_basis and automation_set and 0 < formula_price < existing_price:
         how, selling_price = "follows", formula_price
     else:
         how, selling_price = "kept", max(existing_price, formula_price)
+    # What the Profit % cell and the mirror show (None = leave the cell alone: a typed override stays exactly as typed,
+    # a row without a cost has nothing to show): the band's profit while the row is priced by the formula, the profit
+    # the price REALLY earns after OnBuy's commission once it sits above the formula. The mirror stores it too, which
+    # is how the next run knows the cell is the automation's own and not a typed override.
+    profit_shown = None
+    if profit_override is None and cost_price > 0:
+        profit_shown = band_now
+        if selling_price > formula_price + 0.011:
+            profit_shown = _shown_profit(selling_price, total_cost, fee_rule, fee_override)
     return {"band_now": band_now, "profit_override": profit_override, "fee_override": fee_override,
-            "formula_price": formula_price, "selling_price": selling_price, "how": how, "misread": misread}
+            "formula_price": formula_price, "selling_price": selling_price, "how": how, "misread": misread,
+            "profit_shown": profit_shown}
 
 
 def _shipping_value(cell):
@@ -2061,6 +2186,7 @@ def main():
     priced_with_category_fee = 0
     price_lowered_by_fee = 0
     fee_misread_fixed = 0
+    amazon_manual_kept = 0
     ship_free = ship_paid = ship_unknown = ship_cells_changed = 0
     ship_fees, ship_deltas = [], []
 
@@ -2389,10 +2515,13 @@ def main():
         # 2026-08-28). Keep the price; stock 0 rides on its own column and
         # push (stock-0 updates with a real price are valid - the OOS pass
         # already pushes exactly that).
-        existing_price = float(row.get("Selling Price (£)") or 0)
+        existing_price = _cell_number(row.get("Selling Price (£)")) or 0.0
+        _prev_rule = fees.rule_for_category_id(_prev.get("Category ID")) if _prev.get("Category ID") else None
         _price = decide_price(supplier=supplier, cost_price=cost_price, shipping_cost=shipping_cost,
                               fee_rule=fee_rule, existing_price=existing_price, fee_cell=row.get("Fee %"),
-                              profit_cell=row.get("Profit %"), prev=_prev)
+                              profit_cell=row.get("Profit %"), prev=_prev,
+                              sheet_cost=_to_float(row.get("Cost Price (£)")),
+                              sheet_ship=_shipping_value(row.get("Shipping Cost (£)")), prev_fee_rule=_prev_rule)
         _band_now = _price["band_now"]
         profit_override, fee_override = _price["profit_override"], _price["fee_override"]
         formula_price, selling_price = _price["formula_price"], _price["selling_price"]
@@ -2407,6 +2536,10 @@ def main():
                 price_lowered_by_fee += 1
                 logger.info("Row %d (SKU %s): Amazon price re-derived from current cost: %.2f -> %.2f",
                             i, sku, existing_price, formula_price)
+        elif _price["how"] == "manual":
+            amazon_manual_kept += 1
+            logger.info("Row %d (SKU %s): Amazon price kept at %.2f - set by hand above the formula (%.2f)",
+                        i, sku, existing_price, formula_price)
         elif _price["how"] == "follows":
             price_lowered_by_fee += 1
             if _price["misread"] and profit_override is None:
@@ -2825,13 +2958,13 @@ def main():
         # automation's own value - a manual override stays exactly as typed.
         if "Fee %" in col_map and fee_override is None:
             _fee_shown = (pricing.effective_fee_percent(selling_price, fee_rule) if selling_price > 0
-                          else ((fee_rule.lower_pct if fee_rule else float(pricing.PLATFORM_FEE_PERCENT))
-                                + pricing.FEE_UPLIFT_PERCENT))
+                          else pricing.effective_rate(fee_rule.lower_pct if fee_rule else float(pricing.PLATFORM_FEE_PERCENT)))
             row_updates.append({"range": f"{col_letter(col_map['Fee %'])}{i}",
                                 "values": [[f"{_fee_shown:.2f}"]]})
-        if "Profit %" in col_map and profit_override is None and _band_now is not None:
+        _profit_shown = _price["profit_shown"]
+        if "Profit %" in col_map and profit_override is None and _profit_shown is not None:
             row_updates.append({"range": f"{col_letter(col_map['Profit %'])}{i}",
-                                "values": [[f"{(_band_now or 0):.2f}"]]})
+                                "values": [[_pct_text(_profit_shown)]]})
         # eBay's stated delivery fee goes into the Shipping Cost (£) cell (shipping_cell_update decides: a number for
         # a stated fee, nothing for free delivery on a blank cell; shadow mode only counts it).
         _ship_write = shipping_cell_update(_quote, row.get("Shipping Cost (£)"))
@@ -2899,11 +3032,10 @@ def main():
             # integer-typed in Postgres ("0.00" bounced the whole 375-row
             # upsert with 22P02 on the first category run), so send whole
             # numbers - the sheet keeps the 2-decimal display.
-            "Profit %": str(int(round(_band_now or 0))),
+            "Profit %": str(int(round(_profit_shown if _profit_shown is not None else (_band_now or 0)))),
             "Fee %": str(int(round(pricing.effective_fee_percent(selling_price, fee_rule)
                                    if selling_price > 0 else
-                                   ((fee_rule.lower_pct if fee_rule else pricing.PLATFORM_FEE_PERCENT)
-                                    + pricing.FEE_UPLIFT_PERCENT)))),
+                                   pricing.effective_rate(fee_rule.lower_pct if fee_rule else pricing.PLATFORM_FEE_PERCENT)))),
             "Stock": stock,
             "Selling Price (£)": selling_price,
             "Status": "ACTIVE" if stock > 0 else "INACTIVE",
@@ -2963,6 +3095,33 @@ def main():
 
     # ================= APPLY ALL SHEET VALUE UPDATES (one call for the whole run) =================
     _rows_shifted_at_flush = False
+    # An edit made to a price / override cell while this run was in progress wins over what the run worked out from its
+    # start-of-run snapshot (see drop_edited_cells). Best effort: any trouble reading the columns just skips the guard.
+    _guarded = {col_letter(col_map[_c]): _c for _c in ("Selling Price (£)", "Profit %", "Fee %") if _c in col_map}
+    if all_sheet_updates and _guarded:
+        try:
+            _fresh_sku = with_retry(lambda: sheet.col_values(col_map["SKU"]), what="sku column before the guard", max_attempts=3)
+            _fresh_cols = {_c: with_retry(lambda _c=_c: sheet.col_values(col_map[_c]), what=f"{_c} column before the guard", max_attempts=3)
+                           for _c in _guarded.values()}
+
+            def _fresh_value(_c, _n):
+                _col = _fresh_cols[_c]
+                return _col[_n - 1] if _n - 1 < len(_col) else ""
+
+            def _snap_value(_c, _n):
+                return data[_n - 2].get(_c, "") if 0 <= _n - 2 < len(data) else ""
+
+            all_sheet_updates, _edited = drop_edited_cells(all_sheet_updates, _guarded, sku_display, _snap_value,
+                                                           _fresh_sku, _fresh_value)
+            if _edited:
+                logger.warning("Edited while this run was in progress - %d cell write(s) skipped, the new value stays: %s",
+                               len(_edited), "; ".join(f"{_s} {_c}={_v}" for _s, _c, _v in _edited[:25]))
+                _mirror_by_sku = {str(_r.get("SKU")): _r for _r in supabase_rows}
+                for _s, _c, _v in _edited:
+                    if _c == "Selling Price (£)" and _s in _mirror_by_sku and _cell_number(_v) is not None:
+                        _mirror_by_sku[_s]["Selling Price (£)"] = _cell_number(_v)
+        except Exception as exc:  # noqa: BLE001 - the guard must never block the flush
+            logger.warning("Edit guard skipped (%s) - the run's values are written as computed", str(exc)[:200])
     if all_sheet_updates:
         all_sheet_updates, _rows_shifted_at_flush = _remap_row_writes(all_sheet_updates, "run sheet writes")
     if all_sheet_updates:
@@ -3138,6 +3297,8 @@ def main():
                     priced_with_category_fee, price_lowered_by_fee)
     if fee_misread_fixed:
         logger.info("Fee %% misread fix: %d price(s) re-derived with the category's own commission", fee_misread_fixed)
+    if amazon_manual_kept:
+        logger.info("Amazon prices kept above the formula (set by hand): %d", amazon_manual_kept)
     if ship_free or ship_paid or ship_unknown:
         logger.info("eBay delivery cost%s: %d free, %d paid (fee GBP mean %.2f, median %.2f, p90 %.2f, max %.2f), "
                     "%d not stated by eBay (cell left as it was); %d Shipping Cost cell(s) %s",

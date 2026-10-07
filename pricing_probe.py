@@ -28,6 +28,7 @@ SHEET_NAME = os.getenv("SHEET_NAME") or "YRA_Full_Feed_Master"
 TAB = (os.getenv("SHEET_TAB") or "").strip()
 ROWS = (os.getenv("ROWS") or "").strip()
 LIST_UP = (os.getenv("LIST_UP") or "").strip().lower() in ("1", "yes", "true")
+LIST_MANUAL = (os.getenv("LIST_MANUAL") or "").strip().lower() in ("1", "yes", "true")
 CHUNK = 150
 
 
@@ -57,7 +58,9 @@ def decision(cells, mirror, amazon):
     existing = _to_float(cells("Selling Price (£)"))
     d = decide_price(supplier="Amazon" if amazon else "eBay", cost_price=cost,
                      shipping_cost=_shipping_value(cells("Shipping Cost (£)")), fee_rule=rule,
-                     existing_price=existing, fee_cell=cells("Fee %"), profit_cell=cells("Profit %"), prev=mirror)
+                     existing_price=existing, fee_cell=cells("Fee %"), profit_cell=cells("Profit %"), prev=mirror,
+                     sheet_cost=cost, sheet_ship=_shipping_value(cells("Shipping Cost (£)")),
+                     prev_fee_rule=fees.rule_for_category_id(mirror.get("Category ID")) if mirror.get("Category ID") else None)
     d["rule"], d["existing"] = rule, existing
     d["cost"], d["ship"] = cost, _shipping_value(cells("Shipping Cost (£)"))
     d["prev_cost"], d["prev_ship"] = _to_float(mirror.get("Cost Price (£)")), _to_float(mirror.get("Shipping Cost (£)"))
@@ -104,9 +107,9 @@ def main():
     header = [str(h).strip() for h in values[0]]
     ix = {h: i for i, h in enumerate(header) if h}
     print(f"tab {ws.title!r} ({'Amazon' if amazon else 'eBay'} pricing) | top band profit now {pricing.TOP_BAND_PROFIT:g}% "
-          f"| uplift {pricing.FEE_UPLIFT_PERCENT:g} points | fee mode {'category' if fees.enabled() else 'flat'}"
+          f"| OnBuy VAT on its commission {pricing.FEE_VAT_PERCENT:g}% | fee mode {'category' if fees.enabled() else 'flat'}"
           if hasattr(pricing, "TOP_BAND_PROFIT") else
-          f"tab {ws.title!r} ({'Amazon' if amazon else 'eBay'} pricing) | uplift {pricing.FEE_UPLIFT_PERCENT:g} points "
+          f"tab {ws.title!r} ({'Amazon' if amazon else 'eBay'} pricing) | OnBuy VAT on its commission {pricing.FEE_VAT_PERCENT:g}% "
           f"| fee mode {'category' if fees.enabled() else 'flat'}")
 
     def cells_of(r):
@@ -124,7 +127,8 @@ def main():
         how, misread, fee_ovr, profit_ovr, down, up, human = {}, 0, 0, 0, [], [], 0
         priced = 0
         fee_vals, profit_vals = {}, {}
-        big, up_rows = [], []
+        big, up_rows, manual_rows = [], [], []
+        profit_changes = []
         for n, r in sku_rows:
             c = cells_of(r)
             d = decision(c, mirror.get(c("SKU"), {}), amazon)
@@ -139,6 +143,10 @@ def main():
                 fee_vals[d["fee_override"]] = fee_vals.get(d["fee_override"], 0) + 1
             if d["profit_override"] is not None:
                 profit_vals[d["profit_override"]] = profit_vals.get(d["profit_override"], 0) + 1
+            if d["how"] == "manual":
+                manual_rows.append((n, c("SKU"), d))
+            if d.get("profit_shown") is not None and d.get("band_now") is not None and abs(d["profit_shown"] - d["band_now"]) > 0.005:
+                profit_changes.append((n, c("SKU"), d))
             if d["existing"] > 0:
                 change = (d["selling_price"] / d["existing"] - 1) * 100
                 if change < -8.0:
@@ -157,6 +165,16 @@ def main():
             top = sorted(vals.items(), key=lambda kv: -kv[1])[:10]
             print(f"  most common typed {label} values (value: rows): {dict(top)}")
         print(f"prices kept ABOVE the formula (taken as set by a person): {human}")
+        print(f"Profit % cells that would show the REAL profit of a price above the formula (not the band's): {len(profit_changes)}")
+        if amazon:
+            print(f"Amazon prices kept as a person's (above the formula, no formula produced them): {len(manual_rows)}")
+            if manual_rows and LIST_MANUAL:
+                for n, sku, d in sorted(manual_rows, key=lambda m: -(m[2]["existing"] / m[2]["formula_price"]))[:60]:
+                    print(f"  MANUAL row {n} SKU {sku}: price {d['existing']:.2f} vs formula {d['formula_price']:.2f} "
+                          f"(x{d['existing'] / d['formula_price']:.3f}) | Fee % cell {d['fee_cell']!r} | rule {d['rule']!r}")
+        for n, sku, d in sorted(profit_changes, key=lambda m: -(m[2]["profit_shown"] - m[2]["band_now"]))[:12]:
+            print(f"  PROFIT row {n} SKU {sku}: price {d['existing']:.2f} vs formula {d['formula_price']:.2f} | band {d['band_now']:g}% -> shown "
+                  f"{d['profit_shown']:.2f}%")
         if down:
             print(f"prices that move DOWN: {len(down)} | mean {statistics.mean(down):.2f}%, median {statistics.median(down):.2f}%, "
                   f"p10 {pct(down, 0.1):.2f}%, min {min(down):.2f}%")
@@ -210,7 +228,7 @@ def main():
               f"Profit % {mirror.get('Profit %')!r} | rule {d['rule']!r} | read as: fee override {d['fee_override']}, "
               f"profit override {d['profit_override']} | decision {d['how']}"
               f"{' (price set under the Fee % misread)' if d['misread'] else ''} | price now {d['existing']:.2f} -> "
-              f"{d['selling_price']:.2f} (formula {d['formula_price']:.2f})")
+              f"{d['selling_price']:.2f} (formula {d['formula_price']:.2f}) | Profit % the sync writes: {d.get('profit_shown')}")
 
 
 if __name__ == "__main__":

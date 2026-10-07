@@ -118,6 +118,9 @@ TRACKING_COLUMNS = (
     # so the sync can freeze a SKU pasted onto a different product.
     "Title",
     "Supplier URL",
+    # The category the mirror last saw: a price set before a recategorisation was computed under THAT
+    # category's commission, and is still the automation's own (decide_price's prev_fee_rule).
+    "Category ID",
 )
 
 
