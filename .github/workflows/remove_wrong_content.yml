@@ -1,0 +1,93 @@
+name: Remove Wrong-Content Listings (sheet rows + OnBuy listings)
+
+# User rule 2026-10-07: a listing whose OnBuy page shows ANOTHER product, and that OnBuy will not let us rewrite, is deleted - the OnBuy
+# listing and the sheet row - instead of waiting for a correction. Each SKU is re-checked against OnBuy first (its page must still
+# differ from the row's title); every removed row is copied whole to the backup tab; then the listings are deleted from OnBuy in
+# batches. dry_run=yes (default) only reports. Holds the onbuy-api group for the whole run - dispatch it when the group is idle.
+
+on:
+  workflow_dispatch:
+    inputs:
+      skus:
+        description: "SKUs to remove, comma-separated, exactly as in the sheet"
+        required: true
+      backup_tab:
+        description: "Backup tab (created, or appended to)"
+        required: false
+        default: "Removed 2026-10-07"
+      max_remove:
+        description: "Refuse to remove for real when the plan holds more rows than this"
+        required: false
+        default: "40"
+      keep_at:
+        description: "A SKU whose live page shares at least this fraction of its words with the row's title counts as the same product and is held back"
+        required: false
+        default: "0.5"
+      dry_run:
+        description: "yes = report only; no = remove for real"
+        required: false
+        default: "yes"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Re-check, back up and remove the sheet rows
+        env:
+          SKUS: ${{ inputs.skus }}
+          BACKUP_TAB: ${{ inputs.backup_tab }}
+          MAX_REMOVE: ${{ inputs.max_remove }}
+          KEEP_AT: ${{ inputs.keep_at }}
+          DRY_INPUT: ${{ inputs.dry_run }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: |
+          if [ "$DRY_INPUT" = "no" ]; then export DRY_RUN=0; else export DRY_RUN=1; fi
+          python remove_wrong_content.py
+
+      - name: Delete the removed SKUs' listings from OnBuy (batched)
+        if: ${{ inputs.dry_run == 'no' }}
+        env:
+          DELETE_SKUS_FILE: onbuy_delete_list.txt
+          DRY_RUN: "0"
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: |
+          if ! grep -q . onbuy_delete_list.txt; then
+            echo "nothing to delete on OnBuy"
+            exit 0
+          fi
+          python delete_listings_batch.py
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: removal
+          path: |
+            removal_plan.csv
+            onbuy_delete_list.txt
+            delete_results.csv
+          if-no-files-found: ignore

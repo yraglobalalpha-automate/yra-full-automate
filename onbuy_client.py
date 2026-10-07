@@ -238,6 +238,25 @@ class OnBuyClient:
 
         return with_retry(_do_batch, what="onbuy update_listings_by_sku_batch", max_attempts=3)
 
+    def get_listing(self, sku):
+        """The one live listing record of a SKU (name, price, stock, OPC ...) through GET /v2/listings?filter[sku]= - ONE request
+        instead of a sweep of the account - or None when the SKU has no listing. Several listings answering to one SKU raise
+        PermanentError (never guess which). Transient trouble raises the usual retryable exceptions."""
+        wire = sku_aliases.to_onbuy(sku)      # the SKU the platform holds (sku_aliases.py)
+
+        def _do():
+            resp = self._send("GET", f"{BASE_URL}/listings", what=f"onbuy get_listing({sku})",
+                              params={"site_id": self.site_id, "limit": 5, "offset": 0, "filter[sku]": wire}, timeout=60)
+            raise_for_status(resp, what=f"onbuy get_listing({sku})")
+            return resp.json()
+
+        body = with_retry(_do, what=f"onbuy get_listing({sku})", max_attempts=3)
+        items = (body.get("results") if isinstance(body, dict) else body) or []
+        hit = [i for i in items if str((i or {}).get("sku") or "").strip() == wire]
+        if len(hit) > 1:
+            raise PermanentError(f"onbuy get_listing({sku}): {len(hit)} listings answer to this SKU")
+        return hit[0] if hit else None
+
     def check_winning(self, skus):
         """GET /v2/listings/check-winning (OnBuy support, 2026-08-21): Buy Box
         status + competitive price per SKU. Returns the raw results list:
