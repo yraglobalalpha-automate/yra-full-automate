@@ -1,0 +1,58 @@
+name: Order Fee Probe (read-only)
+
+# What did OnBuy actually charge (the order's `fee`) against the sale amounts, per category tier? Prints money fields only -
+# never a buyer field. Reads orders (and the sheet's categories); writes nothing. Shares the API token with the sync, so it
+# queues in the onbuy-api group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      skus:
+        description: "SKUs to list (comma-separated); empty = every single-line order"
+        required: false
+        default: ""
+      days:
+        description: "How many days back to look"
+        required: false
+        default: "30"
+      status:
+        description: "Order status filter (all, awaiting_dispatch, dispatched, complete, cancelled, refunded ...)"
+        required: false
+        default: "all"
+      max_pages:
+        description: "Pages of 100 orders to read at most"
+        required: false
+        default: "30"
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Probe
+        env:
+          SKUS: ${{ inputs.skus }}
+          DAYS: ${{ inputs.days }}
+          STATUS: ${{ inputs.status }}
+          MAX_PAGES: ${{ inputs.max_pages }}
+          SHEET_NAME: YRA_Full_Feed_Master
+          FEE_MODE: ${{ vars.FEE_MODE }}
+          FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: python order_fee_probe.py
