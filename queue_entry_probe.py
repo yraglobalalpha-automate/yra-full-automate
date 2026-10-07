@@ -87,8 +87,8 @@ def main():
     onbuy = OnBuyClient()
     if not onbuy.authenticate():
         raise SystemExit("OnBuy auth failed")
-    if LISTING_SKU:
-        probe_listing(onbuy, LISTING_SKU)
+    for one in [s.strip() for s in LISTING_SKU.split(",") if s.strip()]:
+        probe_listing(onbuy, one)
     if PRODUCT_OPCS or PRODUCT_UIDS:
         probe_products(onbuy, PRODUCT_OPCS, PRODUCT_UIDS)
     seen, oldest, hits, shown_keys = 0, None, [], False
