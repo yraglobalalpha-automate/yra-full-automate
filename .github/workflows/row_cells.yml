@@ -1,0 +1,28 @@
+name: Row Cells (read-only)
+
+# Prints the stock / price / status / timestamp cells of named SKUs (never a cost). Reads the Google Sheet only - no OnBuy,
+# no Keepa, no writes - so it stays outside the onbuy-api group and is safe alongside any run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      skus:
+        description: "SKUs, comma-separated, exactly as in the sheet"
+        required: true
+
+jobs:
+  cells:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Print the cells
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SKUS: ${{ inputs.skus }}
+        run: python row_cells.py
