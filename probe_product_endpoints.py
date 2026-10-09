@@ -44,6 +44,7 @@ def main():
     if not onbuy.authenticate():
         raise SystemExit("OnBuy auth failed")
     todo = [(None, o) for o in OPCS]
+    names = {}
     for sku in SKUS:
         r = onbuy._send("GET", f"{BASE_URL}/listings", what="listing by sku",
                         params={"site_id": onbuy.site_id, "limit": 5, "offset": 0, "filter[sku]": sku}, timeout=60)
@@ -54,9 +55,11 @@ def main():
             continue
         h = hit[0]
         print(f"SKU {sku}: OPC {h.get('opc')} | created {h.get('created_at')} | product_url {h.get('product_url')} | image_url {h.get('image_url')}")
+        names[sku] = " ".join(str(h.get("name") or "").split()[:6])
         todo.append((sku, h.get("opc") or h.get("product_encoded_id")))
     for sku, opc in todo:
         print(f"OPC {opc} (SKU {sku or '-'})")
+        name_words = names.get(sku, "")
         tries = [
             ("GET /products/{opc}", f"{BASE_URL}/products/{opc}", {"site_id": onbuy.site_id}),
             ("GET /products?search=", f"{BASE_URL}/products", {"site_id": onbuy.site_id, "search": opc}),
@@ -65,6 +68,12 @@ def main():
             ("GET /products?opc=", f"{BASE_URL}/products", {"site_id": onbuy.site_id, "opc": opc}),
             ("GET /products/{opc}/images", f"{BASE_URL}/products/{opc}/images", {"site_id": onbuy.site_id}),
         ]
+        if sku:
+            tries += [
+                ("GET /products?search=<sku>", f"{BASE_URL}/products", {"site_id": onbuy.site_id, "search": sku}),
+                ("GET /products?search=<sku>&limit=5", f"{BASE_URL}/products", {"site_id": onbuy.site_id, "search": sku, "limit": 5, "offset": 0}),
+                ("GET /products?search=<name words>", f"{BASE_URL}/products", {"site_id": onbuy.site_id, "search": name_words, "limit": 5}),
+            ]
         for label, url, params in tries:
             try:
                 resp = onbuy._send("GET", url, what=label, params=params, timeout=60)
