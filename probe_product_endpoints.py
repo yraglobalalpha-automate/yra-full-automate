@@ -74,6 +74,15 @@ def main():
                 ("GET /products?search=<sku>&limit=5", f"{BASE_URL}/products", {"site_id": onbuy.site_id, "search": sku, "limit": 5, "offset": 0}),
                 ("GET /products?search=<name words>", f"{BASE_URL}/products", {"site_id": onbuy.site_id, "search": name_words, "limit": 5}),
             ]
+        bodies = [("GET /products JSON body search=<opc>", {"site_id": onbuy.site_id, "search": opc}),
+                  ("GET /products JSON body search=<sku>", {"site_id": onbuy.site_id, "search": sku or opc}),
+                  ("GET /products JSON body filter.opc", {"site_id": onbuy.site_id, "filter": {"opc": opc}})]
+        for label, body in bodies:
+            try:
+                resp = onbuy._send("GET", f"{BASE_URL}/products", what=label, json=body, timeout=60)
+                show(label, resp)
+            except Exception as exc:  # noqa: BLE001 - read-only diagnostic
+                print(f"  {label}: error {str(exc)[:150]}")
         for label, url, params in tries:
             try:
                 resp = onbuy._send("GET", url, what=label, params=params, timeout=60)
