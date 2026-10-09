@@ -18,7 +18,7 @@ OPCS = [s.strip() for s in (os.getenv("OPCS") or "").split(",") if s.strip()]
 
 def show(label, resp):
     body = resp.text or ""
-    print(f"  {label}: HTTP {resp.status_code} {len(body)} bytes")
+    print(f"  {label}: HTTP {resp.status_code} {len(body)} bytes" + (f" | {body[:170]}" if resp.status_code != 200 else ""))
     try:
         data = resp.json()
     except Exception:  # noqa: BLE001
