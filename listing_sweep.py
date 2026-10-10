@@ -90,7 +90,10 @@ def census_lines(listings, short, meta):
     nosale = [it for it in listings if not has_sale(it)]
     month = lambda it: str((it or {}).get("created_at"))[:7]       # noqa: E731
     day = lambda it: str((it or {}).get("created_at"))[:10]        # noqa: E731
-    lines = [f"{len(listings)} distinct listings, {len(on_sale)} with a sale price; first page metadata: {meta}",
+    total = (meta or {}).get("total_rows") if isinstance(meta, dict) else None
+    coverage = (f"sweep coverage: {len(listings)} of the account's {total} listings ({len(listings) * 100.0 / total:.1f}%)"
+                if isinstance(total, int) and total > 0 else "sweep coverage: the answer carries no total_rows")
+    lines = [f"{len(listings)} distinct listings, {len(on_sale)} with a sale price; first page metadata: {meta}", coverage,
              f"short pages (offset, items): {short[:40]}{' ...' if len(short) > 40 else ''} ({len(short)} in all)",
              f"created months, ALL listings: {dict(sorted(Counter(month(i) for i in listings).items()))}",
              f"created months, with a sale:  {dict(sorted(Counter(month(i) for i in on_sale).items()))}",

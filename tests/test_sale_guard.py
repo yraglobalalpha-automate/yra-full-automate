@@ -228,3 +228,10 @@ def test_blind_items_go_out_in_chunks_without_a_sweep():
     stats = g.send_items(onbuy, [g.blind_item(str(i)) for i in range(5)], dry_run=False, chunk=2, sleep=NOW)
     assert [len(p["listings"]) for p in onbuy.puts] == [2, 2, 1] and stats["ok"] == 5 and onbuy.gets == []
     assert g.send_items(FakeOnBuy(), [g.blind_item("1")], dry_run=True, sleep=NOW)["sent"] == 0
+
+
+def test_the_census_compares_the_sweep_with_the_accounts_own_total():
+    listings = [rec(str(i)) for i in range(90)]
+    text = " | ".join(ls.census_lines(listings, [], {"limit": 100, "offset": 0, "total_rows": 100}))
+    assert "90 of the account's 100 listings (90.0%)" in text
+    assert "carries no total_rows" in " | ".join(ls.census_lines(listings, [], None))
