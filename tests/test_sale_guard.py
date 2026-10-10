@@ -5,6 +5,8 @@ the sale: the listing's own sale price with a window in the past, no price and n
 import sys
 from pathlib import Path
 
+import requests
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import listing_sweep as ls
@@ -43,6 +45,8 @@ class FakeOnBuy:
         self.puts.append(kw["json"])
         if self.put_answers:
             ans = self.put_answers.pop(0)
+            if isinstance(ans, Exception):
+                raise ans
             return ans if isinstance(ans, Resp) else Resp(200, {"success": True, "results": ans})
         return Resp(200, {"success": True, "results": [{"sku": i["sku"], "product_listing_id": "1"} for i in kw["json"]["listings"]]})
 
@@ -194,3 +198,13 @@ def test_the_dump_keeps_selling_facts_only(tmp_path):
     ls.dump([{**rec("1"), "name": "a product name", "cost": 3.2}], str(path))
     row = json.loads(path.read_text(encoding="utf-8"))[0]
     assert row["sku"] == "1" and row["sale_price"] == "9.50" and "name" not in row and "cost" not in row
+
+
+def test_a_timed_out_chunk_is_sent_again_and_a_dead_connection_is_reported_not_raised():
+    waits = []
+    onbuy = FakeOnBuy(put_answers=[requests.ReadTimeout("slow"), [{"sku": "1", "product_listing_id": "1"}]])
+    stats = g.end_sales(onbuy, [rec("1")], dry_run=False, sleep=waits.append)
+    assert stats["ok"] == 1 and len(onbuy.puts) == 2 and 30 in waits
+    dead = FakeOnBuy(put_answers=[requests.ConnectionError("down")] * 6)
+    stats = g.end_sales(dead, [rec("1")], dry_run=False, sleep=NOW)
+    assert stats["failed_requests"] == 1 and stats["ok"] == 0 and any("ConnectionError" in k for k in stats["error_text"])

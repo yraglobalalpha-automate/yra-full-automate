@@ -24,6 +24,8 @@ import os
 import time
 from collections import Counter
 
+import requests
+
 import listing_sweep
 import listings_cache
 from onbuy_client import BASE_URL, OnBuyClient
@@ -72,7 +74,14 @@ def put_chunk(onbuy, items, sleep=time.sleep):
     payload = {"site_id": onbuy.site_id, "seller_id": onbuy.seller_id, "listings": items}
     resp = None
     for attempt in range(6):
-        resp = onbuy._send("PUT", f"{BASE_URL}/listings/by-sku", what=f"sale guard update ({len(items)} SKUs)", json=payload, timeout=120)
+        try:
+            resp = onbuy._send("PUT", f"{BASE_URL}/listings/by-sku", what=f"sale guard update ({len(items)} SKUs)", json=payload, timeout=120)
+        except requests.RequestException as exc:       # a timeout does not say whether OnBuy applied it - the update is idempotent, so send it again
+            if attempt < 5:
+                print(f"sale guard: {type(exc).__name__} on a chunk of {len(items)} - waiting 30s before retrying", flush=True)
+                sleep(30)
+                continue
+            return None, f"{type(exc).__name__}: {str(exc)[:200]}"
         if resp.status_code in (429, 500, 502, 503, 504) and attempt < 5:
             print(f"sale guard: HTTP {resp.status_code} on a chunk of {len(items)} - waiting 120s before retrying", flush=True)
             sleep(120)
