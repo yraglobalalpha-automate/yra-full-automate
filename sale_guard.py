@@ -15,9 +15,13 @@ What it does: sweep the account's listings (or reuse the nightly's shared sweep,
 past-window update in chunks of 500 (PUT /v2/listings/by-sku). API budget: GET = one sweep (64-150 of the 240/hour quota, none when the nightly's cache
 is reused), PUT = ceil(listings with a sale / 500) (the sync itself uses ~195 of 240/hour). Dry run by default.
 
+Blind mode (SKU_FILE=<one SKU per line>): for listings the sweep does not show (the list endpoint's answer can be shorter than the account's own
+total_rows count), no sweep is made: every SKU in the file gets the same past-window update with BLIND_SALE_PRICE (default 0.01) as the sale price -
+a listing without a sale just receives an already-expired one, which OnBuy drops like any other; a SKU that does not exist answers "SKU does not exist".
+
 Env: DRY_RUN (default 1), MAX_FIX (listings to end in this run, 0 = all), CHUNK (default 500), VERIFY_SAMPLE (default 5: after a live run, read that many
 ended listings back), VERIFY_WAIT (seconds before the read-back, default 150), LISTINGS_CACHE (shared sweep file), SALE_GUARD_ALERT (default 1: one
-alert mail when sales were found), DUMP (path: write the sweep's selling-price facts as JSON).
+alert mail when sales were found), DUMP (path: write the sweep's selling-price facts as JSON), SKU_FILE / BLIND_SALE_PRICE (blind mode).
 """
 import json
 import os
@@ -37,6 +41,8 @@ VERIFY_SAMPLE = int(os.getenv("VERIFY_SAMPLE") or "5")
 VERIFY_WAIT = int(os.getenv("VERIFY_WAIT") or "150")
 ALERT = (os.getenv("SALE_GUARD_ALERT") or "1").strip().lower() in ("1", "yes", "true")
 DUMP = (os.getenv("DUMP") or "").strip()
+SKU_FILE = (os.getenv("SKU_FILE") or "").strip()
+BLIND_SALE_PRICE = (os.getenv("BLIND_SALE_PRICE") or "0.01").strip()
 PAUSE = 2.0
 
 # The window that ends a sale: a fixed past one (this exact spelling was accepted and cleared by OnBuy on 2026-10-10).
@@ -62,6 +68,24 @@ def clearing_item(rec):
         sale = price                       # a sale above the price (the price was lowered later) would not validate
     return {"sku": sku, "boost_marketing_commission": 0, "sale_price": f"{sale:.2f}",
             "sale_start_date": PAST_START, "sale_end_date": PAST_END}
+
+
+def blind_item(sku):
+    """The same update for a listing whose sale price is not known: a token sale price with the past window."""
+    return {"sku": str(sku).strip(), "boost_marketing_commission": 0, "sale_price": BLIND_SALE_PRICE,
+            "sale_start_date": PAST_START, "sale_end_date": PAST_END}
+
+
+def read_sku_file(path):
+    """SKUs of a list file: one per line, blank lines and #-comments skipped, repeats dropped, order kept."""
+    out, seen = [], set()
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            sku = line.strip()
+            if sku and not sku.startswith("#") and sku not in seen:
+                seen.add(sku)
+                out.append(sku)
+    return out
 
 
 def chunks(seq, n):
@@ -114,8 +138,11 @@ def describe(on_sale):
 
 
 def end_sales(onbuy, on_sale, dry_run=True, max_fix=0, chunk=CHUNK, sleep=time.sleep):
-    """Send the past-window update for the listings in `on_sale`; returns {"sent", "ok", "errors", "error_text", "ended_skus"}."""
-    todo = [it for it in (clearing_item(r) for r in on_sale) if it]
+    """Send the past-window update for the listings in `on_sale`; returns {"planned", "sent", "ok", "errors", "error_text", "ended_skus"}."""
+    return send_items(onbuy, [it for it in (clearing_item(r) for r in on_sale) if it], dry_run, max_fix, chunk, sleep)
+
+
+def send_items(onbuy, todo, dry_run=True, max_fix=0, chunk=CHUNK, sleep=time.sleep):
     if max_fix > 0:
         todo = todo[:max_fix]
     stats = {"planned": len(todo), "sent": 0, "ok": 0, "errors": 0, "failed_requests": 0, "error_text": Counter(), "ended_skus": []}
@@ -171,10 +198,27 @@ def spread(seq, n):
     return [seq[int(i * step)] for i in range(n)]
 
 
+def main_blind(onbuy):
+    skus = read_sku_file(SKU_FILE)
+    print(f"sale guard (blind): {len(skus)} SKU(s) from {SKU_FILE}, sale price {BLIND_SALE_PRICE} with the past window", flush=True)
+    stats = send_items(onbuy, [blind_item(s) for s in skus], dry_run=DRY_RUN, max_fix=MAX_FIX)
+    if DRY_RUN:
+        print(f"sale guard (blind): DRY RUN - would send {stats['planned']} SKU(s) in {-(-stats['planned'] // max(1, CHUNK))} request(s)", flush=True)
+        return
+    print(f"sale guard (blind): sent {stats['sent']} | accepted {stats['ok']} | errors {stats['errors']} ({stats['failed_requests']} failed request(s))", flush=True)
+    for text, n in stats["error_text"].most_common(8):
+        print(f"sale guard (blind): error x{n}: {text}", flush=True)
+    verify(onbuy, spread(stats["ended_skus"], VERIFY_SAMPLE), VERIFY_WAIT)
+    if stats["ok"] == 0 and stats["errors"]:
+        raise SystemExit(1)
+
+
 def main():
     onbuy = OnBuyClient()
     if not onbuy.authenticate():
         raise SystemExit("OnBuy auth failed")
+    if SKU_FILE:
+        return main_blind(onbuy)
     listings = listings_cache.load()
     if listings is None:
         listings, short, meta, pages = listing_sweep.sweep(onbuy)

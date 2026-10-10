@@ -208,3 +208,23 @@ def test_a_timed_out_chunk_is_sent_again_and_a_dead_connection_is_reported_not_r
     dead = FakeOnBuy(put_answers=[requests.ConnectionError("down")] * 6)
     stats = g.end_sales(dead, [rec("1")], dry_run=False, sleep=NOW)
     assert stats["failed_requests"] == 1 and stats["ok"] == 0 and any("ConnectionError" in k for k in stats["error_text"])
+
+
+# ---------------------------------------------------------------- blind mode (listings the sweep does not show)
+def test_a_blind_item_is_a_token_sale_with_the_past_window_and_no_price_or_stock():
+    item = g.blind_item(" 123 ")
+    assert item == {"sku": "123", "boost_marketing_commission": 0, "sale_price": "0.01",
+                    "sale_start_date": "2026-09-01 00:00:00", "sale_end_date": "2026-09-02 00:00:00"}
+
+
+def test_the_sku_file_skips_comments_blanks_and_repeats(tmp_path):
+    f = tmp_path / "skus.txt"
+    f.write_text("\n".join(["# list of 2026-10-10", "111", "", "  222  ", "111", "#333"]) + "\n", encoding="utf-8")
+    assert g.read_sku_file(str(f)) == ["111", "222"]
+
+
+def test_blind_items_go_out_in_chunks_without_a_sweep():
+    onbuy = FakeOnBuy()
+    stats = g.send_items(onbuy, [g.blind_item(str(i)) for i in range(5)], dry_run=False, chunk=2, sleep=NOW)
+    assert [len(p["listings"]) for p in onbuy.puts] == [2, 2, 1] and stats["ok"] == 5 and onbuy.gets == []
+    assert g.send_items(FakeOnBuy(), [g.blind_item("1")], dry_run=True, sleep=NOW)["sent"] == 0
