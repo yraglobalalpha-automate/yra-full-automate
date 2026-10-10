@@ -207,6 +207,39 @@ def spread(seq, n):
     return [seq[int(i * step)] for i in range(n)]
 
 
+def account_total(onbuy):
+    """OnBuy's own count of this account's listings (metadata.total_rows of a one-item page); None when the answer carries none."""
+    try:
+        r = onbuy._send("GET", f"{BASE_URL}/listings", what="listing count", params={"site_id": onbuy.site_id, "limit": 1, "offset": 0}, timeout=60)
+        total = ((r.json().get("metadata") or {}).get("total_rows")) if r.status_code == 200 else None
+        return total if isinstance(total, int) else None
+    except Exception:  # noqa: BLE001 - no count = trust the shared sweep as before
+        return None
+
+
+def cache_complete(listings, total):
+    """A shared sweep counts as complete when it holds (nearly) every listing OnBuy says the account has. The nightly's own sweeps stop at the
+    first short page (Makstore 2026-10-10: 9,199 of 11,102), and a guard that only looked at those would never see the oldest listings."""
+    return total is None or len(listings) >= total - max(5, int(total * 0.002))
+
+
+def get_listings(onbuy):
+    """The listings to check: the nightly's shared sweep when it is complete, else a fresh complete sweep (which then replaces the cache)."""
+    cached = listings_cache.load()
+    if cached is not None:
+        total = account_total(onbuy)
+        if cache_complete(cached, total):
+            print(f"sale guard: using the shared sweep of {len(cached)} listings (the account has {total})", flush=True)
+            return cached
+        print(f"sale guard: the shared sweep holds {len(cached)} of the account's {total} listings (it stopped at a short page) - sweeping again", flush=True)
+    listings, short, meta, pages = listing_sweep.sweep(onbuy)
+    listings_cache.save(listings)
+    print(f"sale guard: swept {len(listings)} listings in {pages} request(s)", flush=True)
+    for line in listing_sweep.census_lines(listings, short, meta):
+        print("sale guard: " + line, flush=True)
+    return listings
+
+
 def main_blind(onbuy):
     skus = read_sku_file(SKU_FILE)
     print(f"sale guard (blind): {len(skus)} SKU(s) from {SKU_FILE}, sale price {BLIND_SALE_PRICE} with the past window", flush=True)
@@ -228,17 +261,11 @@ def main():
         raise SystemExit("OnBuy auth failed")
     if SKU_FILE:
         return main_blind(onbuy)
-    listings = load_sweep_file(SWEEP_FILE) if SWEEP_FILE else listings_cache.load()
     if SWEEP_FILE:
+        listings = load_sweep_file(SWEEP_FILE)
         print(f"sale guard: using the earlier sweep {SWEEP_FILE} ({len(listings)} listings) - no new sweep", flush=True)
-    elif listings is None:
-        listings, short, meta, pages = listing_sweep.sweep(onbuy)
-        listings_cache.save(listings)
-        print(f"sale guard: swept {len(listings)} listings in {pages} request(s)", flush=True)
-        for line in listing_sweep.census_lines(listings, short, meta):
-            print("sale guard: " + line, flush=True)
     else:
-        print(f"sale guard: using the shared sweep of {len(listings)} listings", flush=True)
+        listings = get_listings(onbuy)
     if DUMP and not SWEEP_FILE:
         listing_sweep.dump(listings, DUMP)
         print(f"sale guard: sweep dump written to {DUMP}", flush=True)

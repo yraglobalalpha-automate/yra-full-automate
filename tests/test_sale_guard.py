@@ -246,3 +246,45 @@ def test_an_earlier_sweep_dump_can_be_loaded_instead_of_sweeping_again(tmp_path)
     bad = tmp_path / "other.json"
     bad.write_text(json.dumps({"results": []}), encoding="utf-8")
     assert g.load_sweep_file(str(bad)) == []
+
+
+# ---------------------------------------------------------------- the nightly's shared sweep must be complete to be trusted
+def test_a_shared_sweep_is_complete_when_it_holds_nearly_every_listing_of_the_account():
+    assert g.cache_complete([1] * 11102, 11102) is True
+    assert g.cache_complete([1] * 11099, 11102) is True            # a few listings created/removed since
+    assert g.cache_complete([1] * 9199, 11102) is False            # the old sweeps' size: stopped at a short page
+    assert g.cache_complete([1] * 100, None) is True               # no count from OnBuy = trust it as before
+
+
+def test_get_listings_reuses_a_complete_cache_and_sweeps_again_when_it_is_short(monkeypatch):
+    cached = [rec(str(i)) for i in range(90)]
+    fresh = [rec(str(i)) for i in range(100)]
+    saved = []
+    monkeypatch.setattr(g.listings_cache, "load", lambda: list(cached))
+    monkeypatch.setattr(g.listings_cache, "save", lambda items: saved.append(len(items)))
+    monkeypatch.setattr(g.listing_sweep, "sweep", lambda onbuy: (list(fresh), [], {"metadata": {"total_rows": 100}}, 2))
+    monkeypatch.setattr(g, "account_total", lambda onbuy: 100)
+    assert len(g.get_listings(object())) == 100 and saved == [100]            # 90 of 100 is not complete -> fresh sweep, cache replaced
+    monkeypatch.setattr(g, "account_total", lambda onbuy: 90)
+    saved.clear()
+    assert len(g.get_listings(object())) == 90 and saved == []                # complete -> the shared sweep is used, nothing swept
+    monkeypatch.setattr(g.listings_cache, "load", lambda: None)
+    assert len(g.get_listings(object())) == 100 and saved == [100]            # no cache at all -> sweep
+
+
+def test_account_total_reads_total_rows_and_never_raises():
+    class R:
+        status_code = 200
+        def __init__(self, body): self._b = body
+        def json(self): return self._b
+
+    class C:
+        site_id = 2000
+        def __init__(self, resp): self.resp = resp
+        def _send(self, *a, **k):
+            if isinstance(self.resp, Exception):
+                raise self.resp
+            return self.resp
+    assert g.account_total(C(R({"results": [], "metadata": {"total_rows": 11102}}))) == 11102
+    assert g.account_total(C(R({"results": []}))) is None
+    assert g.account_total(C(requests.ConnectionError("down"))) is None
