@@ -37,6 +37,7 @@ DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "fals
 MAX_REMOVE = int(os.getenv("MAX_REMOVE") or "2200")
 BACKUP_TAB = os.getenv("BACKUP_TAB") or "Removed 2026-10-02"
 INCLUDE_DUPS = (os.getenv("REMOVE_LIVE_DUPS") or "yes").strip().lower() in ("1", "yes", "true")
+LIST_IN_STOCK_OK = (os.getenv("OOS_LIST_ALLOW_IN_STOCK") or "no").strip().lower() in ("1", "yes", "true")   # rule A: the list may take in-stock rows (explicit order)
 
 
 def load_list(path):
@@ -186,7 +187,7 @@ def main():
         rows += rs
     print("product rows:", {t: sum(1 for r in rows if r["tab"] == t) for t in headers_by_tab})
 
-    out = removal_plan.plan(rows, listed, include_live_dups=INCLUDE_DUPS, approved_dup_skus=approved)
+    out = removal_plan.plan(rows, listed, include_live_dups=INCLUDE_DUPS, approved_dup_skus=approved, listed_in_stock_ok=LIST_IN_STOCK_OK)
     remove, held, absent = out["remove"], out["held"], out["absent"]
     removed_keys = {(r["tab"], r["row"]) for r in remove}
     held = [(r, why) for r, why in held if (r["tab"], r["row"]) not in removed_keys]

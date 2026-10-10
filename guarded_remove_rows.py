@@ -44,6 +44,7 @@ BACKUP_TAB = os.getenv("BACKUP_TAB") or "Removed 2026-10-05"
 INCLUDE_DUPS = (os.getenv("REMOVE_LIVE_DUPS") or "yes").strip().lower() in ("1", "yes", "true")
 REQUIRE_KEEPER_SYNCED = (os.getenv("REQUIRE_KEEPER_SYNCED") or "yes").strip().lower() in ("1", "yes", "true")
 INCLUDE_DEAD = (os.getenv("REMOVE_DEAD_COPIES") or "no").strip().lower() in ("1", "yes", "true")   # rule C
+LIST_IN_STOCK_OK = (os.getenv("OOS_LIST_ALLOW_IN_STOCK") or "no").strip().lower() in ("1", "yes", "true")   # rule A: the list may take in-stock rows
 
 
 def load_list(path):
@@ -169,7 +170,7 @@ def delete_rows(book, tab_title, skus):
 def main():
     listed = load_list(os.getenv("OOS_LIST_FILE") or "")
     approved = load_list(os.getenv("DUP_LIST_FILE") or "") if (os.getenv("DUP_LIST_FILE") or "").strip() else None
-    print(f"listed SKUs: {len(listed)} | live duplicates: {'on' if INCLUDE_DUPS else 'off'} | dead copies: {'on' if INCLUDE_DEAD else 'off'}"
+    print(f"listed SKUs: {len(listed)} | in-stock rows of the list: {'REMOVED too (explicit order)' if LIST_IN_STOCK_OK else 'held'} | live duplicates: {'on' if INCLUDE_DUPS else 'off'} | dead copies: {'on' if INCLUDE_DEAD else 'off'}"
           f"{'' if approved is None else f' (limited to {len(approved)} approved SKU(s))'} | "
           f"{'DRY RUN' if DRY_RUN else 'LIVE RUN'}")
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
@@ -202,7 +203,7 @@ def main():
           f"{'yes' if REQUIRE_KEEPER_SYNCED else 'no'}")
     out = removal_plan.plan(rows, listed, include_live_dups=INCLUDE_DUPS, approved_dup_skus=approved,
                             require_keeper_synced=REQUIRE_KEEPER_SYNCED, exclude_skus=exclude,
-                            include_dead_copies=INCLUDE_DEAD)
+                            include_dead_copies=INCLUDE_DEAD, listed_in_stock_ok=LIST_IN_STOCK_OK)
     remove, held, absent = out["remove"], out["held"], out["absent"]
     removed_keys = {(r["tab"], r["row"]) for r in remove}
     held = [(r, why) for r, why in held if (r["tab"], r["row"]) not in removed_keys]

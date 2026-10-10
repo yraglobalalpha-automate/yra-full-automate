@@ -158,3 +158,23 @@ def test_dead_copy_guards_exclusions_approved_list_repeated_sku_and_synced_owner
     assert removal_plan.plan([keeper, dead], [], False, approved_dup_skus=["999"], include_dead_copies=True)["remove"] == []
     twin = row("Amazon", 3, "222", "amazon:B0Q", created=False)
     assert removal_plan.plan([keeper, dead, twin], [], False, include_dead_copies=True)["remove"] == []
+
+
+def test_an_explicit_list_may_remove_rows_that_show_stock_when_the_order_says_so():
+    rows = [row("Sheet1", 2, "111", "ebay:1", stock=8), row("Sheet1", 3, "222", "ebay:2")]
+    out = removal_plan.plan(rows, ["111", "222"], include_live_dups=False, listed_in_stock_ok=True)
+    assert names(out["remove"]) == [("Sheet1", 2), ("Sheet1", 3)] and out["held"] == []
+    assert out["remove"][0]["reason"] == "listed (in stock - explicit order)" and out["remove"][1]["reason"] == "listed (out of stock)"
+
+
+def test_the_in_stock_override_never_overrides_protection_or_a_repeated_sku():
+    rows = [row("Sheet1", 2, "111", "ebay:1", stock=8), row("Sheet1", 3, "222", "ebay:2", stock=3), row("Amazon", 2, "222", "amazon:B0X", stock=3)]
+    out = removal_plan.plan(rows, ["111", "222"], include_live_dups=False, exclude_skus=["111"], listed_in_stock_ok=True)
+    assert out["remove"] == [] and len(out["held"]) == 2
+    assert "excluded" in out["held"][0][1] and "more than one" in out["held"][1][1]
+
+
+def test_without_the_override_nothing_changes_for_in_stock_rows():
+    rows = [row("Sheet1", 2, "111", "ebay:1", stock=8)]
+    out = removal_plan.plan(rows, ["111"], include_live_dups=False)
+    assert out["remove"] == [] and "back in stock" in out["held"][0][1]

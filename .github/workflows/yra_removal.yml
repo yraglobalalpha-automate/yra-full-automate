@@ -13,6 +13,14 @@ on:
         description: "Repo path: the listed SKUs (one per line)"
         required: true
         default: "cleanup/yra_to_delete_2026-10-01.txt"
+      allow_in_stock:
+        description: "yes = the explicit list may also remove rows that show stock (the user's explicit order; SKUs on several rows still hold)"
+        required: false
+        default: "no"
+      backup_tab:
+        description: "Backup tab (created, or appended to)"
+        required: false
+        default: "Removed 2026-10-10"
       remove_live_dups:
         description: "Also remove live duplicate rows (yes/no)"
         required: false
@@ -50,6 +58,8 @@ jobs:
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           OOS_LIST_FILE: ${{ inputs.oos_list_file }}
+          OOS_LIST_ALLOW_IN_STOCK: ${{ inputs.allow_in_stock }}
+          BACKUP_TAB: ${{ inputs.backup_tab }}
           DUP_LIST_FILE: ${{ inputs.dup_list_file }}
           REMOVE_LIVE_DUPS: ${{ inputs.remove_live_dups }}
           DRY_INPUT: ${{ inputs.dry_run }}
