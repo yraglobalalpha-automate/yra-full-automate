@@ -125,3 +125,10 @@ def test_zero_only_listed_touches_nothing_but_the_named_skus(monkeypatch):
 def test_zero_dry_run_changes_and_remembers_nothing(monkeypatch):
     calls, remembered = _run_zero(monkeypatch, zero_skus=["300"], only_listed=True, dry_run=True)
     assert calls == [] and remembered == []
+
+
+def test_zero_never_zeroes_or_holds_a_listing_on_the_same_product_list(monkeypatch):
+    monkeypatch.setattr(zero, "SAME_PRODUCT", {"200"})
+    calls, remembered = _run_zero(monkeypatch, zero_skus=[], only_listed=False)
+    assert calls == []                       # 200 differs by name but was checked by hand: the live page is its product, only worded differently
+    assert remembered == [["400"]]           # only 400 (mismatched, already at 0) stays held

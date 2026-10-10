@@ -16,9 +16,14 @@ from oauth2client.service_account import ServiceAccountCredentials
 import sheet_tabs
 
 from onbuy_client import BASE_URL, OnBuyClient
+import held_skus
 import listings_cache
 import sku_aliases
 from retry_utils import with_retry
+
+
+# Listings checked BY HAND (2026-10-10): the live page IS this row's product, only worded differently (shared catalogue titles) - never a mismatch.
+SAME_PRODUCT = held_skus.load_skus(os.path.join(held_skus.HERE, "same_product_skus.txt"))
 
 
 def norm(s):
@@ -154,6 +159,9 @@ def main():
             if sku in protected:
                 # visible AND the name matches again -> safe to unprotect
                 print(f"OK|{i + 2}|{sku}|onbuy={lname[:60]}")
+            continue
+        if held_skus.is_held(sku, SAME_PRODUCT):
+            matched += 1          # same_product_skus.txt: the live page is this row's product, worded differently
             continue
         mismatched += 1
         # Which neighbouring row does OnBuy's name belong to? +1 = the row

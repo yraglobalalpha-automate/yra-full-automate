@@ -1,0 +1,8 @@
+# SKUs checked BY HAND on 2026-10-10 (full row title next to the full live page name): the OnBuy page IS this row's product, only worded
+# differently (shared catalogue titles), so the nightly content check must not count them as 'shows another product' and must not zero them.
+# One SKU per line; text after '#' is a note. A listing whose page later turns into a different product must be taken off this list.
+
+983270073380  # 21V Cordless Leaf Blower Power Jet Dry Fan Mini 40
+0602918473657  # 1.5L1200W Blender Smoothie Maker Food Processor Co
+0305061317372  # 97cm Fitness Pull Up Bar for Doorway with NO SCREW
+0102650047777  # 3in1 Electric Nail Clippers For Thick Nails Toe Sa

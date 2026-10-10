@@ -34,6 +34,10 @@ ZERO_SKUS = {s.strip() for s in (os.getenv("ZERO_SKUS") or "").split(",") if s.s
 ZERO_ONLY_LISTED = (os.getenv("ZERO_ONLY_LISTED") or "").strip().lower() in ("1", "yes", "true")
 
 
+# Listings checked BY HAND (2026-10-10): the live page IS this row's product, only worded differently (shared catalogue titles) - never a mismatch.
+SAME_PRODUCT = held_skus.load_skus(os.path.join(held_skus.HERE, "same_product_skus.txt"))
+
+
 def norm(s):
     return re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).strip()
 
@@ -126,7 +130,7 @@ def main():
         lname, lstock, lprice = listings[sku]
         if ZERO_ONLY_LISTED and sku not in ZERO_SKUS:
             continue
-        if sku not in ZERO_SKUS and (not title or similar(lname, title) >= 0.5):
+        if sku not in ZERO_SKUS and (not title or similar(lname, title) >= 0.5 or held_skus.is_held(sku, SAME_PRODUCT)):
             continue
         held.append(sku)  # the audit holds it at 0 whether or not it still has stock to take off
         # Already at zero (a previous pass got it, or it was empty anyway):
