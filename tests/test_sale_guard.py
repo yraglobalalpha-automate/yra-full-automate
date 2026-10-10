@@ -236,3 +236,13 @@ def test_the_census_compares_the_sweep_with_the_accounts_own_total():
     assert "90 of the account's 100 listings (90.0%)" in text
     assert "90 of the account's 100 listings (90.0%)" in " | ".join(ls.census_lines(listings, [], {"limit": 100, "total_rows": 100}))
     assert "carries no total_rows" in " | ".join(ls.census_lines(listings, [], None))
+
+
+def test_an_earlier_sweep_dump_can_be_loaded_instead_of_sweeping_again(tmp_path):
+    import json
+    good = tmp_path / "sweep_dump.json"
+    good.write_text(json.dumps([rec("1"), rec("2")]), encoding="utf-8")
+    assert [r["sku"] for r in g.load_sweep_file(str(good))] == ["1", "2"]
+    bad = tmp_path / "other.json"
+    bad.write_text(json.dumps({"results": []}), encoding="utf-8")
+    assert g.load_sweep_file(str(bad)) == []

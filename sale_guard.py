@@ -21,7 +21,8 @@ a listing without a sale just receives an already-expired one, which OnBuy drops
 
 Env: DRY_RUN (default 1), MAX_FIX (listings to end in this run, 0 = all), CHUNK (default 500), VERIFY_SAMPLE (default 5: after a live run, read that many
 ended listings back), VERIFY_WAIT (seconds before the read-back, default 150), LISTINGS_CACHE (shared sweep file), SALE_GUARD_ALERT (default 1: one
-alert mail when sales were found), DUMP (path: write the sweep's selling-price facts as JSON), SKU_FILE / BLIND_SALE_PRICE (blind mode).
+alert mail when sales were found), DUMP (path: write the sweep's selling-price facts as JSON), SKU_FILE / BLIND_SALE_PRICE (blind mode), SWEEP_FILE (use the
+sweep-dump of an earlier run instead of sweeping again - the GET quota is 240/hour and a full sweep is 118-140 of it).
 """
 import json
 import os
@@ -42,6 +43,7 @@ VERIFY_WAIT = int(os.getenv("VERIFY_WAIT") or "150")
 ALERT = (os.getenv("SALE_GUARD_ALERT") or "1").strip().lower() in ("1", "yes", "true")
 DUMP = (os.getenv("DUMP") or "").strip()
 SKU_FILE = (os.getenv("SKU_FILE") or "").strip()
+SWEEP_FILE = (os.getenv("SWEEP_FILE") or "").strip()
 BLIND_SALE_PRICE = (os.getenv("BLIND_SALE_PRICE") or "0.01").strip()
 PAUSE = 2.0
 
@@ -86,6 +88,13 @@ def read_sku_file(path):
                 seen.add(sku)
                 out.append(sku)
     return out
+
+
+def load_sweep_file(path):
+    """The listings of an earlier run's sweep-dump (a JSON list of records); [] when the file holds anything else."""
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return data if isinstance(data, list) else []
 
 
 def chunks(seq, n):
@@ -219,8 +228,10 @@ def main():
         raise SystemExit("OnBuy auth failed")
     if SKU_FILE:
         return main_blind(onbuy)
-    listings = listings_cache.load()
-    if listings is None:
+    listings = load_sweep_file(SWEEP_FILE) if SWEEP_FILE else listings_cache.load()
+    if SWEEP_FILE:
+        print(f"sale guard: using the earlier sweep {SWEEP_FILE} ({len(listings)} listings) - no new sweep", flush=True)
+    elif listings is None:
         listings, short, meta, pages = listing_sweep.sweep(onbuy)
         listings_cache.save(listings)
         print(f"sale guard: swept {len(listings)} listings in {pages} request(s)", flush=True)
@@ -228,7 +239,7 @@ def main():
             print("sale guard: " + line, flush=True)
     else:
         print(f"sale guard: using the shared sweep of {len(listings)} listings", flush=True)
-    if DUMP:
+    if DUMP and not SWEEP_FILE:
         listing_sweep.dump(listings, DUMP)
         print(f"sale guard: sweep dump written to {DUMP}", flush=True)
     on_sale = [r for r in listings if listing_sweep.has_sale(r)]

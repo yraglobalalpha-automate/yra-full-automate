@@ -24,6 +24,10 @@ on:
         description: "Seconds to wait before that read-back"
         required: false
         default: "150"
+      from_run:
+        description: "Run id of an earlier sale_guard / probe sweep whose sweep-dump artifact is used instead of sweeping again (saves the GET quota)"
+        required: false
+        default: ""
       skus:
         description: "BLIND mode (no sweep): SKUs, comma-separated - each gets the past-window update with a token sale price"
         required: false
@@ -32,6 +36,10 @@ on:
         description: "BLIND mode: path of a list file in the repo (one SKU per line)"
         required: false
         default: ""
+
+permissions:
+  contents: read
+  actions: read
 
 concurrency:
   group: onbuy-api
@@ -49,8 +57,15 @@ jobs:
       - run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+      - name: Fetch the sweep of an earlier run
+        if: ${{ inputs.from_run != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FROM_RUN: ${{ inputs.from_run }}
+        run: gh run download "$FROM_RUN" --repo "${{ github.repository }}" -n sweep-dump -D earlier_sweep
       - name: Guard
         env:
+          SWEEP_FILE: ${{ inputs.from_run != '' && 'earlier_sweep/sweep_dump.json' || '' }}
           MAX_FIX: ${{ inputs.max_fix }}
           VERIFY_SAMPLE: ${{ inputs.verify_sample }}
           VERIFY_WAIT: ${{ inputs.verify_wait }}
