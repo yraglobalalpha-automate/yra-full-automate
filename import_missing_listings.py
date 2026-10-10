@@ -61,7 +61,7 @@ def page_listings(onbuy):
                 out[sku] = (str(it.get("name") or "").strip(),
                             str(it.get("price") or "").strip(),
                             str(it.get("stock") or "").strip())
-        if len(items) < limit:
+        if len(items) < limit and not onbuy.more_listings(offset, limit):
             break
         offset += limit
         time.sleep(0.3)

@@ -76,7 +76,7 @@ def main():
         if not isinstance(items, list) or not items:
             break
         raw_items.extend(items)
-        if len(items) < limit:
+        if len(items) < limit and not onbuy.more_listings(offset, limit):
             break
         offset += limit
     if fetched:

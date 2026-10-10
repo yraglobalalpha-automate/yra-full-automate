@@ -120,7 +120,28 @@ class OnBuyClient:
         if resp.status_code == 401 and self.authenticate():
             logger.info("%s: OnBuy token rejected mid-run - re-authenticated, retrying once", what)
             resp = requests.request(method, url, headers=self._headers(), **kwargs)
+        if method.upper() == "GET" and resp.status_code == 200 and str(url).rstrip("/").endswith("/listings"):
+            self._listings_total = self._total_rows(resp)
         return resp
+
+    _listings_total = None      # total_rows of the last GET /listings answer (None = the answer carried none)
+
+    @staticmethod
+    def _total_rows(resp):
+        try:
+            body = resp.json()
+            total = ((body.get("metadata") or {}).get("total_rows") if isinstance(body, dict) else None)
+            return total if isinstance(total, int) else None
+        except (ValueError, AttributeError):
+            return None
+
+    def more_listings(self, offset, limit=100):
+        """True when OnBuy's own total_rows (metadata of the LAST GET /listings answer) says more listings follow the page that started at `offset`.
+        A page with fewer than `limit` items is NOT necessarily the last one: a listing hidden from the page leaves it short (Makstore 2026-10-10: the
+        page at offset 9,100 held 99 items while total_rows was 11,102, and every sweep that stopped there never saw the oldest ~1,900 listings).
+        False when the answer carried no total_rows - the callers then behave exactly as before."""
+        total = self._listings_total
+        return isinstance(total, int) and total > offset + limit
 
     @staticmethod
     def _fit_product_name(title, limit=150):

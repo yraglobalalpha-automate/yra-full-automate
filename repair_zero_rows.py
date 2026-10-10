@@ -54,7 +54,7 @@ def page_live(onbuy):
             s = str((it or {}).get("sku") or "").strip()
             if s:
                 out.add(s)
-        if len(items) < limit:
+        if len(items) < limit and not onbuy.more_listings(offset, limit):
             break
         offset += limit
         time.sleep(0.3)

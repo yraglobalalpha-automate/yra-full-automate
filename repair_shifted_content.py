@@ -88,7 +88,7 @@ def main():
             sku = str(it.get("sku") or "").strip()
             if sku:
                 listings[sku] = str(it.get("name") or "").strip()
-        if len(items) < limit:
+        if len(items) < limit and not onbuy.more_listings(offset, limit):
             break
         offset += limit
     log.info("live listings: %d", len(listings))

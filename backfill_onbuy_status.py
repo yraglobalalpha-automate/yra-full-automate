@@ -225,7 +225,7 @@ def fetch_opc_sku_map(onbuy):
             opc = _listing_opc(item)
             if sku and opc:
                 mapping[opc] = sku
-        if len(items) < 100:
+        if len(items) < 100 and not onbuy.more_listings(offset, 100):
             break
         offset += 100
     print(f"[opc-import] listings swept: {len(mapping)} OPC->SKU pairs")

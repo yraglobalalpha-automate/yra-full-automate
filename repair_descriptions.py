@@ -81,7 +81,7 @@ def listings_opc_map(onbuy):
             opc = str(it.get("opc") or "").strip()
             if sku and opc and sku not in out:
                 out[sku] = opc
-        if len(items) < limit:
+        if len(items) < limit and not onbuy.more_listings(offset, limit):
             break
         offset += limit
         time.sleep(0.3)

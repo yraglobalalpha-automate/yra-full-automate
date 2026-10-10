@@ -33,7 +33,7 @@ def main():
             it = it or {}
             rows.append([it.get("sku"), it.get("opc") or it.get("product_encoded_id"), it.get("product_listing_id"), it.get("price"),
                          it.get("stock"), it.get("created_at"), it.get("updated_at"), str(it.get("name") or "")[:120], it.get("product_url")])
-        if len(items) < limit:
+        if len(items) < limit and not onbuy.more_listings(offset, limit):
             break
         offset += limit
     with open("listings_snapshot.csv", "w", newline="", encoding="utf-8") as fh:

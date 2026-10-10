@@ -132,7 +132,7 @@ def page_listings(onbuy):
                 except (TypeError, ValueError):
                     stock = 0
                 out[sku] = (to_f(it.get("price")), stock)
-        if len(items) < limit:
+        if len(items) < limit and not onbuy.more_listings(offset, limit):
             break
         offset += limit
         time.sleep(0.3)

@@ -103,7 +103,7 @@ def live_listings(onbuy):
         if not isinstance(items, list) or not items:
             break
         raw_items.extend(items)
-        if len(items) < 100:
+        if len(items) < 100 and not onbuy.more_listings(off, 100):
             break
         off += 100
     if fetched:

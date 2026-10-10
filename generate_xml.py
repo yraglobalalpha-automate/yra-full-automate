@@ -1825,7 +1825,7 @@ def main():
                             _lp[_s] = float(_it.get("price") or 0)
                         except (TypeError, ValueError):
                             pass
-                if len(_items) < 100:
+                if len(_items) < 100 and not onbuy.more_listings(_off, 100):
                     break
                 _off += 100
             oos_pending = [(i2, s2, (p2 if p2 else _lp.get(s2))) for i2, s2, p2 in oos_pending]

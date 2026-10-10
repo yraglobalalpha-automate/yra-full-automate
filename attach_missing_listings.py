@@ -90,7 +90,7 @@ def fetch_existing_listing_skus(onbuy):
             sku = str((it or {}).get("sku") or "").strip()
             if sku:
                 skus.add(sku)
-        if len(items) < limit:
+        if len(items) < limit and not onbuy.more_listings(offset, limit):
             return skus
         offset += limit
 

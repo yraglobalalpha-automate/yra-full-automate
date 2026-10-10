@@ -36,7 +36,7 @@ def main():
         if not isinstance(items, list):
             break
         listings.extend(i or {} for i in items)
-        if len(items) < limit:
+        if len(items) < limit and not onbuy.more_listings(offset, limit):
             break
         offset += limit
     print(f"live listings: {len(listings)}")

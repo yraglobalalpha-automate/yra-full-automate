@@ -87,7 +87,7 @@ def live_listings(onbuy):
             if sku:
                 out[sku] = {"stock": to_int(it.get("stock")) or 0, "price": it.get("price"),
                             "updated": ptime(it.get("updated_at")), "opc": it.get("opc")}
-        if len(items) < 100:
+        if len(items) < 100 and not onbuy.more_listings(offset, 100):
             break
         offset += 100
     return out

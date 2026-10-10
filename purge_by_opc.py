@@ -50,7 +50,7 @@ def main():
             sku = str(it.get("sku") or "").strip()
             if opc and sku:
                 live[opc] = sku
-        if len(items) < limit:
+        if len(items) < limit and not onbuy.more_listings(offset, limit):
             break
         offset += limit
     print(f"live listings mapped: {len(live)}")

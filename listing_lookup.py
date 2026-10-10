@@ -41,7 +41,7 @@ def main():
             seen += 1
             if sku in WANT or (sku.lstrip("0") or "0") in ZL:
                 found[sku] = it
-        if len(items) < limit:
+        if len(items) < limit and not onbuy.more_listings(offset, limit):
             break
         offset += limit
     print(f"swept {seen} listings; matched {len(found)} of {len(WANT)} requested SKUs")

@@ -40,7 +40,7 @@ def dump_listings():
                 w.writerow([it.get("sku"), it.get("price"), it.get("stock"),
                             it.get("created_at"), it.get("updated_at"), it.get("opc")])
                 n += 1
-            if len(items) < limit:
+            if len(items) < limit and not onbuy.more_listings(offset, limit):
                 break
             offset += limit
     print(f"account_listings.csv: {n} rows")
