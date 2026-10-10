@@ -1,6 +1,7 @@
 name: Sale Price Probe (read-only)
 
 # Which listings carry a SALE price ("On Sale: GBP x" on the OnBuy dashboard) and what their records say. GET only; selling prices only.
+# sweep=yes also uploads the sweep as an artifact (sweep-dump: sku, opc, price, stock, sale fields, created/updated) for offline analysis.
 # Uses the OnBuy token, so it queues in the onbuy-api group.
 
 on:
@@ -26,7 +27,7 @@ concurrency:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,9 +41,18 @@ jobs:
           SKUS: ${{ inputs.skus }}
           SWEEP: ${{ inputs.sweep == 'yes' && '1' || '' }}
           SAMPLE: ${{ inputs.sample }}
+          DUMP: ${{ inputs.sweep == 'yes' && 'sweep_dump.json' || '' }}
           ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
           ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
           ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
           ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
           ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
-        run: python sale_price_probe.py
+        run: python -u sale_price_probe.py
+      - name: Upload the sweep
+        if: ${{ always() && inputs.sweep == 'yes' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sweep-dump
+          path: sweep_dump.json
+          retention-days: 3
+          if-no-files-found: ignore
