@@ -53,6 +53,20 @@ if UPDATE_HOURS in ("off", "none"):
 # stats.current / csv price-type indexes (Keepa "Price Type indexing")
 IDX_AMAZON, IDX_NEW, IDX_COUNT_NEW, IDX_BUY_BOX_SHIPPING = 0, 1, 11, 18
 
+# The USUAL price, not a discount (2026-10-10, user: "a voucher or sale discount at the sourcing must not apply on OnBuy - fetch the real
+# sourcing price only"). stats.current is what the offer costs RIGHT NOW: a Lightning / Prime-Exclusive / Deal-of-the-Day price, a seller's
+# sale, a short dip. Priced from that, an OnBuy listing falls with every deal (the Amazon tab re-derives its price on every visit) and shows
+# as "on sale" next to the RRP it was created with - and the order arrives after the deal has ended. So the cost basis is the price the
+# product NORMALLY sells at: never below the current price, and at least the LOWER of its 30- and 90-day averages (the lower one, so that a
+# short price spike cannot inflate it), lifted by at most REGULAR_MAX_UPLIFT_PERCENT of the current price. Vouchers / coupons
+# (product["coupon"]) are never part of Keepa's price arrays, so they cannot lower the price. KEEPA_REGULAR_PRICE=0 switches the rule off.
+REGULAR_PRICE = (os.getenv("KEEPA_REGULAR_PRICE") or "1").strip().lower() not in ("0", "no", "false", "off")
+try:
+    REGULAR_MAX_UPLIFT_PERCENT = float(os.getenv("KEEPA_REGULAR_MAX_UPLIFT_PERCENT") or "35")
+except ValueError:
+    REGULAR_MAX_UPLIFT_PERCENT = 35.0
+REGULAR_LIFTED = 0          # prices lifted from a discount to the usual level in this process (the sync prints it at the end)
+
 # availabilityAmazon codes (the "sold by Amazon" offer only)
 AVAILABILITY_TEXT = {
     -1: "No Amazon offer",
@@ -209,10 +223,30 @@ def _category_names(product):
     return [n for n in names if n]
 
 
+def regular_price(product, price, reason):
+    """The price (pence) the chosen offer NORMALLY sells at: max(current, min(30-day average, 90-day average)) of the same price type,
+    capped at +REGULAR_MAX_UPLIFT_PERCENT of the current price. `price` unchanged when the rule is off, the offer is not Amazon's own
+    or the lowest New one (a Buy Box price is left alone), or Keepa has no average for it."""
+    global REGULAR_LIFTED
+    if not REGULAR_PRICE or price <= 0 or reason not in ("amazon", "new"):
+        return price
+    stats = product.get("stats") or {}
+    idx = IDX_AMAZON if reason == "amazon" else IDX_NEW
+    averages = [v for v in (_price(stats.get("avg30") or [], idx), _price(stats.get("avg90") or [], idx)) if v > 0]
+    if not averages:
+        return price
+    usual = max(price, min(averages))
+    usual = min(usual, int(price * (1.0 + REGULAR_MAX_UPLIFT_PERCENT / 100.0)))
+    if usual > price:
+        REGULAR_LIFTED += 1
+    return usual
+
+
 def normalize_product(product, asin="", use_buybox=None):
     """(available, data) in get_ebay_data()'s shape for one Keepa product."""
     asin = asin or str(product.get("asin") or "").upper()
     price, seller, availability, _reason = choose_offer(product, use_buybox)
+    price = regular_price(product, price, _reason)
     data = empty_amazon_response(asin)
     names = _category_names(product)
     data.update({

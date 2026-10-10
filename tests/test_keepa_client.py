@@ -150,3 +150,82 @@ def test_fetch_products_batches_and_paces(monkeypatch):
     out = client.fetch_products(asins)
     assert [len(c) for c in calls] == [100, 50]
     assert len(out) == 150 and "B000000001" in out
+
+
+# ---------------------------------------------------------------- the USUAL price, never a deal / voucher / sale price (2026-10-10)
+def _with_averages(current_new, avg30_new, avg90_new, **over):
+    """A third-party-only product (Amazon itself has no offer) with 30 / 90 day averages for the New price."""
+    stats = {"current": [-1, current_new], "avg30": [-1, avg30_new], "avg90": [-1, avg90_new]}
+    return _product(availabilityAmazon=-1, stats=stats, **over)
+
+
+@pytest.fixture
+def usual(monkeypatch):
+    monkeypatch.setattr(kc, "REGULAR_PRICE", True)
+    monkeypatch.setattr(kc, "REGULAR_MAX_UPLIFT_PERCENT", 35.0)
+    monkeypatch.setattr(kc, "REGULAR_LIFTED", 0)
+    return kc
+
+
+def _data(p):
+    available, data = kc.normalize_product(p, "B0F3GWXLTS", use_buybox=False)
+    assert available
+    return data
+
+
+def test_a_deal_price_is_replaced_by_the_usual_price(usual):
+    # 20.00 today (a deal), 26.00 / 27.00 on average over 30 / 90 days -> the cost basis is the LOWER average, 26.00
+    assert _data(_with_averages(2000, 2600, 2700))["price"] == 26.00
+    assert usual.REGULAR_LIFTED == 1
+
+
+def test_a_price_above_its_averages_is_kept(usual):
+    assert _data(_with_averages(3000, 2800, 2900))["price"] == 30.00
+    assert usual.REGULAR_LIFTED == 0
+
+
+def test_a_short_price_spike_in_the_30_day_average_does_not_inflate_the_price(usual):
+    # the 30-day average was dragged up by a spike (35.00); the 90-day average (22.00) is the usual level
+    assert _data(_with_averages(2000, 3500, 2200))["price"] == 22.00
+
+
+def test_the_lift_is_capped(usual):
+    # 10.00 today against averages around 25: at most +35% of the current price
+    assert _data(_with_averages(1000, 2500, 2600))["price"] == 13.50
+
+
+def test_amazons_own_offer_uses_the_amazon_averages(usual):
+    stats = {"current": [3499, 2000], "avg30": [4200, 2000], "avg90": [4300, 2000]}
+    price, _seller, _availability, reason = kc.choose_offer(_product(stats=stats), use_buybox=False)
+    assert (price, reason) == (3499, "amazon")
+    assert _data(_product(stats=stats))["price"] == 42.00          # Amazon's own price 34.99 is a dip below its 42.00 / 43.00 usual level
+
+
+def test_no_averages_means_no_change(usual):
+    assert _data(_product(availabilityAmazon=-1, stats={"current": [-1, 3289]}))["price"] == 32.89
+    assert _data(_product(availabilityAmazon=-1, stats={"current": [-1, 3289], "avg30": [-1, -1], "avg90": []}))["price"] == 32.89
+
+
+def test_one_average_is_enough(usual):
+    stats = {"current": [-1, 2000], "avg30": [-1, 2400], "avg90": [-1, -1]}
+    assert _data(_product(availabilityAmazon=-1, stats=stats))["price"] == 24.00
+
+
+def test_the_rule_can_be_switched_off(usual, monkeypatch):
+    monkeypatch.setattr(kc, "REGULAR_PRICE", False)
+    assert _data(_with_averages(2000, 2600, 2700))["price"] == 20.00
+    assert usual.REGULAR_LIFTED == 0
+
+
+def test_a_voucher_never_changes_the_price(usual):
+    base = _data(_with_averages(2000, 2000, 2000))["price"]
+    with_coupon = _data(_with_averages(2000, 2000, 2000, coupon=[-15, 0], promotions=[{"type": "x"}]))["price"]
+    assert base == with_coupon == 20.00
+
+
+def test_a_buy_box_offer_is_left_alone(usual):
+    stats = {"current": [-1, 2500], "avg30": [-1, 4000], "avg90": [-1, 4000], "buyBoxPrice": 2000, "buyBoxShipping": 0,
+             "buyBoxIsShippable": True, "buyBoxAvailabilityMessage": "IN_STOCK"}
+    p = _product(availabilityAmazon=-1, stats=stats)
+    price, _seller, _availability, reason = kc.choose_offer(p, use_buybox=True)
+    assert reason == "buybox" and kc.regular_price(p, price, reason) == price == 2000

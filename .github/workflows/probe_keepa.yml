@@ -31,6 +31,7 @@ jobs:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
           KEEPA_BUYBOX: ${{ vars.KEEPA_BUYBOX }}
+          KEEPA_REGULAR_PRICE: ${{ vars.KEEPA_REGULAR_PRICE }}
           KEEPA_UPDATE_HOURS: ${{ vars.KEEPA_UPDATE_HOURS }}
           AMAZON_DEFAULT_STOCK: ${{ vars.AMAZON_DEFAULT_STOCK }}
           SHEET_TAB: ${{ inputs.tab }}

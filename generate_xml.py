@@ -3299,6 +3299,8 @@ def main():
         logger.info("Fee %% misread fix: %d price(s) re-derived with the category's own commission", fee_misread_fixed)
     if amazon_manual_kept:
         logger.info("Amazon prices kept above the formula (set by hand): %d", amazon_manual_kept)
+    if keepa_client.REGULAR_LIFTED:
+        logger.info("Amazon prices taken from the usual level instead of a deal / voucher / sale price: %d", keepa_client.REGULAR_LIFTED)
     if ship_free or ship_paid or ship_unknown:
         logger.info("eBay delivery cost%s: %d free, %d paid (fee GBP mean %.2f, median %.2f, p90 %.2f, max %.2f), "
                     "%d not stated by eBay (cell left as it was); %d Shipping Cost cell(s) %s",
