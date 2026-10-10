@@ -1,0 +1,48 @@
+name: Sale Price Probe (read-only)
+
+# Which listings carry a SALE price ("On Sale: GBP x" on the OnBuy dashboard) and what their records say. GET only; selling prices only.
+# Uses the OnBuy token, so it queues in the onbuy-api group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      skus:
+        description: "SKUs, comma-separated (each read with a filtered GET)"
+        required: false
+        default: ""
+      sweep:
+        description: "yes = sweep every listing and count the ones with a sale price"
+        required: false
+        default: ""
+      sample:
+        description: "How many on-sale listings to print"
+        required: false
+        default: "25"
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Probe
+        env:
+          SKUS: ${{ inputs.skus }}
+          SWEEP: ${{ inputs.sweep == 'yes' && '1' || '' }}
+          SAMPLE: ${{ inputs.sample }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: python sale_price_probe.py
