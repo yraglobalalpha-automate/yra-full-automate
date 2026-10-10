@@ -232,6 +232,7 @@ def test_blind_items_go_out_in_chunks_without_a_sweep():
 
 def test_the_census_compares_the_sweep_with_the_accounts_own_total():
     listings = [rec(str(i)) for i in range(90)]
-    text = " | ".join(ls.census_lines(listings, [], {"limit": 100, "offset": 0, "total_rows": 100}))
+    text = " | ".join(ls.census_lines(listings, [], {"metadata": {"limit": 100, "offset": 0, "total_rows": 100}}))
     assert "90 of the account's 100 listings (90.0%)" in text
+    assert "90 of the account's 100 listings (90.0%)" in " | ".join(ls.census_lines(listings, [], {"limit": 100, "total_rows": 100}))
     assert "carries no total_rows" in " | ".join(ls.census_lines(listings, [], None))
