@@ -1,6 +1,4 @@
 # OnBuy content mismatch 2026-08-21 scan: no price/stock pushes until repaired/delisted.
-983270073380
-0305061317372
 0862487193558
 969464819965
 698604772470
