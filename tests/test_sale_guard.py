@@ -177,3 +177,20 @@ def test_a_repeated_sku_is_kept_once():
     onbuy = FakeOnBuy(pages={0: full(0, 100), 100: full(50, 100)})          # offset paging over a moving list repeats 50 of them
     out, _short, _meta, _pages = ls.sweep(onbuy, limit=100, sleep=NOW)
     assert len(out) == 150 and len({r["sku"] for r in out}) == 150
+
+
+# ---------------------------------------------------------------- census + dump
+def test_the_census_summarises_a_sweep_and_survives_odd_records():
+    listings = [rec("1", price="10", sale="9.5"),
+                {"sku": "2", "price": "5", "stock": 0, "sale_price": None, "created_at": "2026-10-06 10:00:00"},
+                {"sku": "3", "price": None, "sale_price": "x"}]
+    text = " | ".join(ls.census_lines(listings, [(100, 98)], {"metadata": {"total": 3}}))
+    assert "3 distinct listings, 1 with a sale price" in text and "(100, 98)" in text and "2026-10-06" in text and "0.950" in text
+
+
+def test_the_dump_keeps_selling_facts_only(tmp_path):
+    import json
+    path = tmp_path / "dump.json"
+    ls.dump([{**rec("1"), "name": "a product name", "cost": 3.2}], str(path))
+    row = json.loads(path.read_text(encoding="utf-8"))[0]
+    assert row["sku"] == "1" and row["sale_price"] == "9.50" and "name" not in row and "cost" not in row

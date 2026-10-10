@@ -17,7 +17,7 @@ is reused), PUT = ceil(listings with a sale / 500) (the sync itself uses ~195 of
 
 Env: DRY_RUN (default 1), MAX_FIX (listings to end in this run, 0 = all), CHUNK (default 500), VERIFY_SAMPLE (default 5: after a live run, read that many
 ended listings back), VERIFY_WAIT (seconds before the read-back, default 150), LISTINGS_CACHE (shared sweep file), SALE_GUARD_ALERT (default 1: one
-alert mail when sales were found).
+alert mail when sales were found), DUMP (path: write the sweep's selling-price facts as JSON).
 """
 import json
 import os
@@ -34,6 +34,7 @@ CHUNK = int(os.getenv("CHUNK") or "500")
 VERIFY_SAMPLE = int(os.getenv("VERIFY_SAMPLE") or "5")
 VERIFY_WAIT = int(os.getenv("VERIFY_WAIT") or "150")
 ALERT = (os.getenv("SALE_GUARD_ALERT") or "1").strip().lower() in ("1", "yes", "true")
+DUMP = (os.getenv("DUMP") or "").strip()
 PAUSE = 2.0
 
 # The window that ends a sale: a fixed past one (this exact spelling was accepted and cleared by OnBuy on 2026-10-10).
@@ -169,9 +170,14 @@ def main():
     if listings is None:
         listings, short, meta, pages = listing_sweep.sweep(onbuy)
         listings_cache.save(listings)
-        print(f"sale guard: swept {len(listings)} listings in {pages} request(s); short pages: {short[:10]}{' ...' if len(short) > 10 else ''}", flush=True)
+        print(f"sale guard: swept {len(listings)} listings in {pages} request(s)", flush=True)
+        for line in listing_sweep.census_lines(listings, short, meta):
+            print("sale guard: " + line, flush=True)
     else:
         print(f"sale guard: using the shared sweep of {len(listings)} listings", flush=True)
+    if DUMP:
+        listing_sweep.dump(listings, DUMP)
+        print(f"sale guard: sweep dump written to {DUMP}", flush=True)
     on_sale = [r for r in listings if listing_sweep.has_sale(r)]
     print(f"sale guard: {len(on_sale)} of {len(listings)} listings carry a sale price", flush=True)
     for line in describe(on_sale) if on_sale else []:

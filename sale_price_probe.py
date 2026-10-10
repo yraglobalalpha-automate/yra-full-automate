@@ -13,9 +13,8 @@ Env: SKUS (comma-separated), SWEEP (1 = sweep every listing), SAMPLE (how many o
 """
 import json
 import os
-from collections import Counter
 
-from listing_sweep import has_sale, sweep
+from listing_sweep import census_lines, dump, has_sale, sweep
 from onbuy_client import BASE_URL, OnBuyClient
 
 SKUS = [s.strip() for s in (os.getenv("SKUS") or "").split(",") if s.strip()]
@@ -23,7 +22,6 @@ SWEEP = (os.getenv("SWEEP") or "").strip().lower() in ("1", "yes", "true")
 SAMPLE = int(os.getenv("SAMPLE") or "25")
 DUMP = (os.getenv("DUMP") or "").strip()
 SALE_KEYS = ("price", "stock", "sale_price", "sale_start_date", "sale_end_date", "created_at", "updated_at", "product_listing_id", "opc", "boost_marketing_commission")
-DUMP_KEYS = ("sku", "opc", "product_listing_id", "price", "stock", "sale_price", "sale_start_date", "sale_end_date", "created_at", "updated_at")
 
 
 def main():
@@ -50,31 +48,13 @@ def main():
     on_sale = [it for it in listings if has_sale(it)]
     known = set(SKUS)
     found_known = sorted(str(it.get("sku") or "").strip() for it in listings if str(it.get("sku") or "").strip() in known)
-    print(f"\nSWEEP: {pages} page(s), {len(listings)} distinct listings read | with a sale price set: {len(on_sale)} | the named SKUs found in the sweep: {found_known}")
-    print(f"first page metadata: {meta}")
-    print(f"short pages (offset, items): {short[:40]}{' ...' if len(short) > 40 else ''} ({len(short)} in all)")
-    print("created months, ALL listings:   ", dict(sorted(Counter(str(i.get('created_at'))[:7] for i in listings).items())))
-    print("created months, with a sale:    ", dict(sorted(Counter(str(i.get('created_at'))[:7] for i in on_sale).items())))
-    print("sale start dates:", dict(Counter(str(i.get("sale_start_date"))[:10] for i in on_sale).most_common(8)))
-    print("sale end dates:  ", dict(Counter(str(i.get("sale_end_date"))[:10] for i in on_sale).most_common(8)))
-    nosale = [it for it in listings if not has_sale(it)]
-    print("created dates of listings WITHOUT a sale (newest 12 days):", dict(sorted(Counter(str(i.get('created_at'))[:10] for i in nosale).items(), reverse=True)[:12]))
-    print("stock zero among listings without / with a sale:", sum(1 for i in nosale if str(i.get("stock")) == "0"), "/", sum(1 for i in on_sale if str(i.get("stock")) == "0"))
-
-    def ratio(it):
-        try:
-            return float(it["sale_price"]) / float(it["price"])
-        except (TypeError, ValueError, ZeroDivisionError):
-            return None
-    rs = sorted(x for x in (ratio(i) for i in on_sale) if x)
-    if rs:
-        print(f"sale price / price: median {rs[len(rs) // 2]:.3f}, min {rs[0]:.3f}, max {rs[-1]:.3f}")
-        print("   ratio bands:", dict(Counter(("<0.7" if x < 0.7 else "0.7-0.9" if x < 0.9 else "0.9-0.99" if x < 0.99 else "0.99-1.0" if x <= 1.0 else ">1.0") for x in rs)))
+    print(f"SWEEP: {pages} request(s), the named SKUs found in the sweep: {found_known}")
+    for line in census_lines(listings, short, meta):
+        print(line)
     for it in on_sale[:SAMPLE]:
         print("ONSALE|" + json.dumps({k: it.get(k) for k in ("sku", "price", "sale_price", "sale_start_date", "sale_end_date", "created_at", "stock")}, default=str))
     if DUMP:
-        with open(DUMP, "w", encoding="utf-8") as fh:
-            json.dump([{k: it.get(k) for k in DUMP_KEYS} for it in listings], fh)
+        dump(listings, DUMP)
         print(f"dump written: {DUMP} ({len(listings)} listings)")
 
 

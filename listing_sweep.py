@@ -5,7 +5,9 @@ longer answer taken (a truncated page once made Makstore look like 3,499 listing
 not END the sweep - only two empty pages in a row do - and the short pages seen are returned, so a run can say whether the listing count looks
 complete. Listings are de-duplicated by SKU (offset paging over a list that changes while it is read can repeat an entry).
 """
+import json
 import time
+from collections import Counter
 
 from onbuy_client import BASE_URL
 from retry_utils import with_retry
@@ -71,3 +73,39 @@ def sweep(onbuy, limit=LIMIT, sleep=time.sleep):
             out.append(it)
         offset += limit
     return out, short, meta, pages
+
+
+DUMP_KEYS = ("sku", "opc", "product_listing_id", "price", "stock", "sale_price", "sale_start_date", "sale_end_date", "created_at", "updated_at")
+
+
+def dump(listings, path):
+    """Write the sweep's selling-price facts (no names, no costs) to a JSON file for offline analysis (the workflow uploads it as an artifact)."""
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump([{k: (it or {}).get(k) for k in DUMP_KEYS} for it in listings], fh)
+
+
+def census_lines(listings, short, meta):
+    """Printable facts about a sweep: is it complete-looking, and which listings carry a sale (dates, ratios, creation months)."""
+    on_sale = [it for it in listings if has_sale(it)]
+    nosale = [it for it in listings if not has_sale(it)]
+    month = lambda it: str((it or {}).get("created_at"))[:7]       # noqa: E731
+    day = lambda it: str((it or {}).get("created_at"))[:10]        # noqa: E731
+    lines = [f"{len(listings)} distinct listings, {len(on_sale)} with a sale price; first page metadata: {meta}",
+             f"short pages (offset, items): {short[:40]}{' ...' if len(short) > 40 else ''} ({len(short)} in all)",
+             f"created months, ALL listings: {dict(sorted(Counter(month(i) for i in listings).items()))}",
+             f"created months, with a sale:  {dict(sorted(Counter(month(i) for i in on_sale).items()))}",
+             f"created days of listings WITHOUT a sale (newest 12): {dict(sorted(Counter(day(i) for i in nosale).items(), reverse=True)[:12])}",
+             f"sale start dates: {dict(Counter(str(i.get('sale_start_date'))[:10] for i in on_sale).most_common(8))}",
+             f"sale end dates:   {dict(Counter(str(i.get('sale_end_date'))[:10] for i in on_sale).most_common(8))}",
+             f"stock zero among listings without / with a sale: {sum(1 for i in nosale if str(i.get('stock')) == '0')} / {sum(1 for i in on_sale if str(i.get('stock')) == '0')}"]
+    ratios = []
+    for it in on_sale:
+        try:
+            ratios.append(float(it["sale_price"]) / float(it["price"]))
+        except (TypeError, ValueError, ZeroDivisionError, KeyError):
+            pass
+    if ratios:
+        ratios.sort()
+        bands = Counter("<0.7" if x < 0.7 else "0.7-0.9" if x < 0.9 else "0.9-0.99" if x < 0.99 else "0.99-1.0" if x <= 1.0 else ">1.0" for x in ratios)
+        lines.append(f"sale price / price: median {ratios[len(ratios) // 2]:.3f}, min {ratios[0]:.3f}, max {ratios[-1]:.3f}; bands {dict(bands)}")
+    return lines
