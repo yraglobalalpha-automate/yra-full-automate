@@ -100,6 +100,34 @@ jobs:
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
         run: python generate_xml.py
 
+      # User 2026-10-12: out-of-stock and brand-blocked eBay rows are deleted from OnBuy and the sheet right after the sync (purge_dead_rows.py).
+      # Kill switch: repo variable PURGE_DEAD_ROWS=0. Report only: PURGE_DRY_RUN=1. It never fails the sync.
+      - name: Purge out-of-stock and brand-blocked eBay rows
+        if: ${{ !cancelled() && vars.PURGE_DEAD_ROWS != '0' }}
+        continue-on-error: true
+        env:
+          DRY_RUN: ${{ vars.PURGE_DRY_RUN || '0' }}
+          MAX_ROWS: ${{ vars.PURGE_MAX_ROWS || '200' }}
+          MAX_EBAY_CHECKS: ${{ vars.PURGE_MAX_EBAY_CHECKS || '250' }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          ALERT_EMAIL_FROM: ${{ vars.ALERT_EMAIL_FROM }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+        run: python purge_dead_rows.py
+
       # feed.xml is uploaded to Supabase Storage from inside generate_xml.py
       # (see storage.py) once SUPABASE_URL/SUPABASE_SERVICE_KEY secrets exist -
       # that replaces the old "commit feed.xml every 3 hours forever" step,
