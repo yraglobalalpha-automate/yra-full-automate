@@ -157,7 +157,7 @@ jobs:
             git add -- protected_skus.txt hold_at_zero_skus.txt
             git commit -m "nightly: keep the listings it zeroed at zero (protected_skus.txt + hold_at_zero_skus.txt)"
             for i in 1 2 3 4; do
-              git pull --rebase origin main && git push origin HEAD:main && break
+              git pull --rebase --autostash origin main && git push origin HEAD:main && break
               sleep 6
             done
           else
