@@ -356,6 +356,29 @@ def delete_rows(book, tab_title, skus):
     return deleted, skipped
 
 
+def list_suspended(book):
+    """Print the SKUs of purged rows whose OnBuy listing OnBuy refuses to delete (suspended) - read back from the 'Purged ...' backup tabs, whose reason column keeps
+    OnBuy's answer. Returns the (SKU, title) pairs."""
+    out = []
+    for ws in book.worksheets():
+        if not ws.title.startswith("Purged "):
+            continue
+        values = with_retry(ws.get_all_values, what=f"read {ws.title}", max_attempts=3)
+        if not values:
+            continue
+        h = [str(x).strip() for x in values[0]]
+        if "bk_reason" not in h or "bk_SKU" not in h:
+            continue
+        i_r, i_s, i_t = h.index("bk_reason"), h.index("bk_SKU"), (h.index("bk_Title") if "bk_Title" in h else None)
+        for r in values[1:]:
+            if i_r < len(r) and "OnBuy: suspended" in r[i_r]:
+                out.append((str(r[i_s]).strip() if i_s < len(r) else "", (str(r[i_t]).strip() if i_t is not None and i_t < len(r) else "")[:60]))
+    print(f"{len(out)} purged SKU(s) whose OnBuy listing is suspended - OnBuy refuses to delete them, delete them by hand on OnBuy:")
+    for sku, title in out:
+        print(f"SUSPENDED {sku}  {title}")
+    return out
+
+
 # ---------------------------------------------------------------- the run
 def report(rows, cands, held, final, stats):
     kinds = Counter(c["kind"] for c in cands)
@@ -378,6 +401,9 @@ def main():
         json.loads(os.environ["GOOGLE_CREDENTIALS"]),
         ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
     book = with_retry(lambda: gspread.authorize(creds).open(SHEET_NAME), what="sheet open", max_attempts=3)
+    if (os.getenv("LIST_SUSPENDED") or "").strip().lower() in ("1", "yes", "true"):
+        list_suspended(book)
+        return
     ws = sheet_tabs.product_sheet(book)
     others = []
     try:
@@ -453,6 +479,8 @@ def main():
 
     suspended = sorted(s for s, o in outcomes.items() if o == "suspended")
     errors = sorted(s for s, o in outcomes.items() if o not in REMOVABLE_OUTCOMES)
+    for s in suspended:
+        print(f"SUSPENDED {s}  {next((c['title'][:60] for c in final if c['sku'] == s), '')}")
     if suspended:
         titles = {c["sku"]: c["title"][:50] for c in final}
         notify.send_alert_email(

@@ -295,6 +295,27 @@ def test_rows_are_deleted_bottom_up_by_a_fresh_read_and_a_repeated_sku_is_skippe
     assert starts == [3, 1]                                                       # sheet row 4 (c) before row 2 (a), 0-based: deleting bottom-up never shifts a pending row
 
 
+class TabWs:
+    def __init__(self, title, values):
+        self.title, self._v = title, values
+
+    def get_all_values(self):
+        return self._v
+
+
+def test_the_suspended_listings_are_read_back_from_the_purged_tabs(capsys):
+    head = ["bk_removed_utc", "bk_tab", "bk_row", "bk_reason", "bk_SKU", "bk_Title"]
+    tab = TabWs("Purged 2026-10", [head,
+                                   ["t", "Sheet1", "5", "out of stock on eBay (removed) | OnBuy: ok", "A1", "fine"],
+                                   ["t", "Sheet1", "6", "brand blocked | OnBuy: suspended", "B2", "a stuck one"],
+                                   ["t", "Sheet1", "7", "out of stock on eBay (ended) | OnBuy: suspended", "C3", "another stuck one"]])
+    other = TabWs("Sheet1", [["SKU"], ["X"]])
+    book = SimpleNamespace(worksheets=lambda: [other, tab])
+    assert pd.list_suspended(book) == [("B2", "a stuck one"), ("C3", "another stuck one")]
+    out = capsys.readouterr().out
+    assert "2 purged SKU(s)" in out and "SUSPENDED B2  a stuck one" in out and "A1" not in out
+
+
 def test_the_log_never_carries_a_cost(capsys):
     r = dict(row(5, "S5", stock=0), kind="oos", confirmed="removed")
     r["cells"] = ["S5", "Title", "COST-12.34"]

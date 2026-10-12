@@ -28,6 +28,10 @@ on:
         description: "yes = skip the 'implausibly many rows' breaker (a deliberate mass clean-up)"
         required: false
         default: "no"
+      list_suspended:
+        description: "yes = only list the purged SKUs whose OnBuy listing is suspended (OnBuy refuses to delete them); nothing else runs"
+        required: false
+        default: "no"
 
 concurrency:
   group: onbuy-api
@@ -51,6 +55,7 @@ jobs:
           MAX_EBAY_CHECKS: ${{ inputs.max_ebay_checks }}
           KINDS: ${{ inputs.kinds }}
           ALLOW_MASS: ${{ inputs.allow_mass }}
+          LIST_SUSPENDED: ${{ inputs.list_suspended }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
