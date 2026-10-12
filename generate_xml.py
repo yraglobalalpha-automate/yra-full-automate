@@ -948,8 +948,10 @@ def to_jpg(url):
     return url
 
 
-def empty_ebay_response():
-    return {
+def empty_ebay_response(reason=""):
+    """The blank answer for an unavailable item. `reason` (optional) says why - removed | ended | out_of_stock | no_price | no_availability |
+    bad_link - and rides along as ebay_data["reason"] for purge_dead_rows.py; the sync itself never reads it."""
+    out = {
         "stock": 0,
         "price": 0,
         "description": "",
@@ -960,6 +962,9 @@ def empty_ebay_response():
         "product_code": "",
         "condition": "",
     }
+    if reason:
+        out["reason"] = reason
+    return out
 
 
 _BARCODE_ASPECT_NAMES = ("EAN", "GTIN", "UPC", "ISBN")
@@ -1118,7 +1123,7 @@ def get_ebay_data(url, token):
     """
     match = re.search(r"/itm/(\d+)", url)
     if not match:
-        return False, empty_ebay_response()
+        return False, empty_ebay_response("bad_link")
     item_id = match.group(1)
 
     def _do_fetch():
@@ -1139,7 +1144,7 @@ def get_ebay_data(url, token):
 
     if data is None:
         logger.info("REMOVED LISTING: %s", item_id)
-        return False, empty_ebay_response()
+        return False, empty_ebay_response("removed")
 
     # An itemEndDate in the past = the listing ENDED. eBay's own
     # community confirms getItemByLegacyId can still answer with cached
@@ -1151,7 +1156,7 @@ def get_ebay_data(url, token):
         try:
             if datetime.fromisoformat(_end.replace("Z", "+00:00")) <= datetime.now(timezone.utc):
                 logger.info("LISTING ENDED %s: %s", _end[:10], item_id)
-                return False, empty_ebay_response()
+                return False, empty_ebay_response("ended")
         except ValueError:
             pass
 
@@ -1159,7 +1164,7 @@ def get_ebay_data(url, token):
     price = float(price_data.get("value", 0) or 0)
     if price <= 0:
         logger.info("NO PRICE: %s", item_id)
-        return False, empty_ebay_response()
+        return False, empty_ebay_response("no_price")
 
     estimated = data.get("estimatedAvailabilities", [])
     stock = 5
@@ -1171,13 +1176,13 @@ def get_ebay_data(url, token):
         # mistake, so absence = out of stock; price and content stay,
         # and the row self-heals the moment the block returns.
         logger.info("NO AVAILABILITY BLOCK (treated as out of stock): %s", item_id)
-        return False, empty_ebay_response()
+        return False, empty_ebay_response("no_availability")
     if estimated:
         est = estimated[0]
         status = est.get("estimatedAvailabilityStatus", "")
         if status in ("OUT_OF_STOCK", "UNAVAILABLE"):
             logger.info("OUT OF STOCK: %s", item_id)
-            return False, empty_ebay_response()
+            return False, empty_ebay_response("out_of_stock")
         stock = est.get("estimatedAvailableQuantity")
         if not stock:
             # eBay hides the exact count above a threshold - the listing
