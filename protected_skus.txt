@@ -5,3 +5,5 @@
 703123011372
 # 2026-10-05 nightly-flagged listings showing another product, zeroed on the user's instruction - kept at 0 so the sync cannot re-stock them
 708901210664
+# 2026-10-12 borderline flags (same type, other model/spec/brand): the user ordered them FROZEN at stock 0, not deleted - release only after the page/row is fixed
+193036826772  # row = SMART RGB ultra-thin ceiling light; page = plain LED round panel down light - smart/RGB feature differs
