@@ -103,7 +103,7 @@ jobs:
       # User 2026-10-12: out-of-stock and brand-blocked eBay rows are deleted from OnBuy and the sheet right after the sync (purge_dead_rows.py).
       # Kill switch: repo variable PURGE_DEAD_ROWS=0. Report only: PURGE_DRY_RUN=1. It never fails the sync.
       - name: Purge out-of-stock and brand-blocked eBay rows
-        if: ${{ !cancelled() && vars.PURGE_DEAD_ROWS != '0' }}
+        if: ${{ !cancelled() && format('{0}', vars.PURGE_DEAD_ROWS) != '0' }}
         continue-on-error: true
         env:
           DRY_RUN: ${{ vars.PURGE_DRY_RUN || '0' }}
