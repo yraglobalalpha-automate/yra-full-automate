@@ -11,6 +11,7 @@ a wrong-content listing came straight back the next night, and the listing sold 
 The audit now never pushes the sheet's price/stock onto a held listing and takes any stock it still shows off.
 """
 import os
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FILES = ("hold_at_zero_skus.txt", "held_at_zero.txt")
@@ -75,3 +76,50 @@ def split_held(live, sheet, held):
             continue
         to_zero.append((sku, price, stock, sheet[sku][2], sheet[sku][3]))
     return to_zero, rest
+
+
+PROTECTED_FILE = "protected_skus.txt"
+HOLD_FILE = "hold_at_zero_skus.txt"
+_PROTECTED_HEADER = "# OnBuy content mismatch: no price/stock pushes until repaired/delisted.\n"
+_HOLD_HEADER = (
+    "# SKUs whose OnBuy listing shows ANOTHER product (title, description, images) or another model/spec than the sheet row. The nightly price/stock audit holds them at stock 0\n"
+    "# instead of pushing the sheet's stock, and protected_skus.txt stops the hourly sync from restocking them.\n"
+    "# Remove a line only after the listing's content has been repaired (and then from protected_skus.txt too).\n")
+
+
+def persist_holds(items, base_dir=HERE, today=None):
+    """Make the nightly's zeroes permanent (user 2026-10-12: "never restock the nightly zeroes").
+
+    items: [(sku, note)]. Appends each SKU that is not yet on the file to protected_skus.txt (the sync never pushes price/stock for it again) AND to
+    hold_at_zero_skus.txt (the audit keeps the stock off), with a dated comment line and the note, keeping each file's line endings and creating a
+    missing file with its header. Returns the sorted SKUs that were new to at least one file; touches nothing when there are none."""
+    today = today or time.strftime("%Y-%m-%d", time.gmtime())
+    items = [(str(s).strip(), " ".join(str(n or "").split())) for s, n in items if str(s or "").strip()]
+    added = set()
+    for fname, header in ((PROTECTED_FILE, _PROTECTED_HEADER), (HOLD_FILE, _HOLD_HEADER)):
+        path = os.path.join(base_dir, fname)
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+        except OSError:
+            raw = b""
+        crlf = b"\r\n" in raw
+        text = raw.decode("utf-8").replace("\r\n", "\n")
+        have = load_skus(path)
+        new, seen = [], set()
+        for sku, note in items:
+            if sku in seen or is_held(sku, have):
+                continue
+            seen.add(sku)
+            new.append((sku, note))
+        if not new:
+            continue
+        if not text.strip():
+            text = header
+        block = [f"# {today} the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed"]
+        block += [f"{sku}  # {note[:140]}" if note else sku for sku, note in new]
+        text = text.rstrip("\n") + "\n" + "\n".join(block) + "\n"
+        with open(path, "wb") as fh:
+            fh.write((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+        added.update(sku for sku, _ in new)
+    return sorted(added)

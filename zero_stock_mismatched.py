@@ -32,6 +32,9 @@ ZERO_SKUS = {s.strip() for s in (os.getenv("ZERO_SKUS") or "").split(",") if s.s
 # Only the named SKUs (2026-10-05): a listing the name check cannot flag (same brand and half the same words as the product it
 # wrongly shows) is zeroed without touching any other mismatched listing.
 ZERO_ONLY_LISTED = (os.getenv("ZERO_ONLY_LISTED") or "").strip().lower() in ("1", "yes", "true")
+# The nightly sets PERSIST_HOLDS=1: every listing this pass holds is written to protected_skus.txt + hold_at_zero_skus.txt (a workflow step commits them),
+# so the hourly sync never restocks it (user 2026-10-12: "never restock the nightly zeroes"). Off elsewhere: tests and one-off runs must not write files.
+PERSIST_HOLDS = (os.getenv("PERSIST_HOLDS") or "0").strip().lower() in ("1", "yes", "true")
 
 
 # Listings checked BY HAND (2026-10-10): the live page IS this row's product, only worded differently (shared catalogue titles) - never a mismatch.
@@ -121,7 +124,7 @@ def main():
             if _i + 1 < len(_sku_display):
                 _row["SKU"] = str(_sku_display[_i + 1]).replace(",", "").strip()
 
-    targets, held = [], []
+    targets, held, held_notes = [], [], {}
     for i, r in enumerate(rows):
         sku = str(r.get("SKU") or "").strip()
         if not sku or sku not in listings:
@@ -133,6 +136,7 @@ def main():
         if sku not in ZERO_SKUS and (not title or similar(lname, title) >= 0.5 or held_skus.is_held(sku, SAME_PRODUCT)):
             continue
         held.append(sku)  # the audit holds it at 0 whether or not it still has stock to take off
+        held_notes[sku] = f"{sheet.title} row {i + 2}: row = {title[:45]} | page = {lname[:45]}"
         # Already at zero (a previous pass got it, or it was empty anyway):
         # nothing to protect - skipping makes every pass pure progress, so
         # the chain converges instead of redoing the same head each run.
@@ -176,6 +180,9 @@ def main():
         return
     # Hand-off to the price/stock audit that runs next in the nightly job: it must not push the sheet's stock back onto these.
     log.info("held at zero for the audit: %d", held_skus.remember(held))
+    if PERSIST_HOLDS:
+        added = held_skus.persist_holds([(s, held_notes.get(s, "")) for s in held])
+        log.info("kept at zero for good (protected_skus.txt + hold_at_zero_skus.txt): %d new SKU(s) %s", len(added), added[:12])
 
     zeroed = failed = 0
     # Account quota is 12,000 calls/day (user-confirmed) - the stops we hit
