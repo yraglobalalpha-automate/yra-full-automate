@@ -1,0 +1,45 @@
+name: Image Probe (read-only)
+
+# Can OnBuy's public product page show which listings have broken images? Reads the sheet, a few filtered listing GETs, the public pages and the image URLs.
+# Writes nothing anywhere. Uses the OnBuy token, so it queues in the onbuy-api group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      skus:
+        description: "SKUs, comma-separated (empty = the first N in-stock rows of the first tab)"
+        required: false
+        default: ""
+      n:
+        description: "How many rows to probe"
+        required: false
+        default: "8"
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Probe
+        env:
+          SKUS: ${{ inputs.skus }}
+          N: ${{ inputs.n }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: python -u image_probe.py
