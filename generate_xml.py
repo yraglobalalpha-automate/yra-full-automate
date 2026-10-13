@@ -3241,7 +3241,16 @@ def main():
     feed_count = 0
     skipped_feed = 0
 
-    for row in sheet.get_all_records():
+    # The hosted XML is a catalogue mirror written AFTER all the real work (sheet, OnBuy, Supabase) is done. A Google blip while re-reading the sheet for it
+    # (Makstore 2026-10-12 17:43Z: a 503, then a 404 "Requested entity was not found") must not turn a finished sync red: retry, and when it still fails
+    # keep the previous hosted copy - never upload an empty feed.
+    try:
+        _feed_rows = with_retry(sheet.get_all_records, what="feed read", max_attempts=3)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("feed read failed (%s) - the hosted XML copy is left as it was this run", str(exc)[:160])
+        _feed_rows = None
+
+    for row in (_feed_rows or []):
         try:
             sku = str(row.get("SKU") or "").strip()
             title = str(row.get("Title") or "").strip()
@@ -3291,8 +3300,11 @@ def main():
         feed_bytes = ET.tostring(root, encoding="utf-8")
         logger.info("Feed over %d MB - descriptions shortened to 400 chars for the hosted copy (now %.1f MB)",
                     FEED_MAX_BYTES // (1024 * 1024), len(feed_bytes) / (1024 * 1024))
-    ET.ElementTree(root).write(FEED_FILE, encoding="utf-8", xml_declaration=True)
-    feed_url = storage.upload_feed(local_path=FEED_FILE, remote_path=FEED_FILE)
+    if _feed_rows is None:
+        feed_url = None        # nothing to publish this run: the previous hosted copy stays
+    else:
+        ET.ElementTree(root).write(FEED_FILE, encoding="utf-8", xml_declaration=True)
+        feed_url = storage.upload_feed(local_path=FEED_FILE, remote_path=FEED_FILE)
 
     # ================= FINAL LOGS + ALERTS =================
     logger.info("DONE")

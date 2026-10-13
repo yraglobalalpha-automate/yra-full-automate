@@ -493,5 +493,19 @@ def main():
           f"suspended on OnBuy {len(suspended)}; OnBuy errors {len(errors)}")
 
 
+def guarded_main(fn=None):
+    """Run main(); an unexpected crash is mailed (the chained step is continue-on-error, so a failed step still reads "success" in the run) and re-raised."""
+    try:
+        (fn or main)()
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        try:
+            notify.send_alert_email("Purge of dead eBay rows crashed", f"{type(exc).__name__}: {str(exc)[:400]}\n\nThe sync itself is unaffected; the purge retries on the next run.")
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+
+
 if __name__ == "__main__":
-    main()
+    guarded_main()

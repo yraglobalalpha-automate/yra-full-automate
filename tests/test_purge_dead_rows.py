@@ -366,3 +366,36 @@ def test_an_available_item_carries_no_reason_and_the_blank_answer_is_unchanged_w
     assert available is True and "reason" not in data
     assert gx.empty_ebay_response() == {"stock": 0, "price": 0, "description": "", "main_image": "", "additional_images": [], "title": "", "brand": "",
                                         "product_code": "", "condition": ""}
+
+# ---------------------------------------------------------------- 2026-10-13 hardening (found by the log check)
+def test_a_purge_crash_is_mailed_and_re_raised(monkeypatch):
+    sent = []
+    monkeypatch.setattr(pd.notify, "send_alert_email", lambda subject, body, routine=False: sent.append((subject, body)))
+
+    def boom():
+        raise RuntimeError("sheet gone")
+
+    with pytest.raises(RuntimeError):
+        pd.guarded_main(boom)
+    assert len(sent) == 1 and "crashed" in sent[0][0] and "sheet gone" in sent[0][1]
+
+
+def test_a_deliberate_exit_is_not_mailed_as_a_crash(monkeypatch):
+    sent = []
+    monkeypatch.setattr(pd.notify, "send_alert_email", lambda subject, body, routine=False: sent.append(subject))
+
+    def refuse():
+        raise SystemExit("purge refused")
+
+    with pytest.raises(SystemExit):
+        pd.guarded_main(refuse)
+    assert sent == []
+
+
+def test_the_syncs_hosted_xml_read_is_retried_and_never_replaced_by_an_empty_feed_when_it_fails():
+    text = (Path(__file__).resolve().parents[1] / "generate_xml.py").read_text(encoding="utf-8")
+    assert "with_retry(sheet.get_all_records, what=\"feed read\"" in text
+    assert "if _feed_rows is None:" in text and "feed_url = None" in text
+    assert "storage.upload_feed(local_path=FEED_FILE, remote_path=FEED_FILE)" in text
+    # the upload sits in the else branch of that test, so a failed read can never publish the empty feed
+    assert text.index("if _feed_rows is None:") < text.index("storage.upload_feed(")

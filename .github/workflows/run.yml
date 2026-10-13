@@ -108,7 +108,8 @@ jobs:
         env:
           DRY_RUN: ${{ vars.PURGE_DRY_RUN || '0' }}
           MAX_ROWS: ${{ vars.PURGE_MAX_ROWS || '200' }}
-          MAX_EBAY_CHECKS: ${{ vars.PURGE_MAX_EBAY_CHECKS || '250' }}
+          MAX_EBAY_CHECKS: ${{ vars.PURGE_MAX_EBAY_CHECKS || '150' }}
+          EBAY_RESERVE: ${{ vars.PURGE_EBAY_RESERVE || '0' }}   # the sync keeps 150 calls in reserve for exactly this
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
