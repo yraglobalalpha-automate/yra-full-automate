@@ -178,3 +178,99 @@ def test_workflow_is_a_dry_run_by_default_and_serialised_with_the_other_onbuy_jo
     # the OnBuy delete runs only for a real run, and only after the sheet step
     assert text.index("python remove_wrong_content.py") < text.index("python delete_listings_batch.py")
     assert "inputs.dry_run == 'no'" in text
+
+
+# ---- unattended mode (user 2026-10-13: "Delist every wrong listing from now and in future") -------------------------------------------------
+
+SHARK_FILTER = "Shark Replacement Filter Pack"          # shares one word with the Shark page: borderline, not clearly another product
+
+
+def test_a_borderline_page_stays_frozen_in_the_nightly_but_goes_in_a_manual_run():
+    overlap = rwc.adoption_guard.title_similarity(SHARK, SHARK_FILTER)
+    assert 0.25 <= overlap < 0.5
+    auto = rwc.plan_wrong_content(["A-1"], [row("A-1", SHARK_FILTER)], {"A-1": lst(SHARK)}, keep_at=0.25)
+    assert auto["remove"] == [] and "borderline" in auto["held"][0][1] and "frozen" in auto["held"][0][1]
+    manual = rwc.plan_wrong_content(["A-1"], [row("A-1", SHARK_FILTER)], {"A-1": lst(SHARK)}, keep_at=0.5)
+    assert [r["sku"] for r in manual["remove"]] == ["A-1"]
+
+
+def test_a_clearly_different_product_goes_in_the_nightly():
+    out = rwc.plan_wrong_content(["A-1"], [row("A-1", ROXEL)], {"A-1": lst(SHARK)}, keep_at=0.25)
+    assert [r["sku"] for r in out["remove"]] == ["A-1"] and "(shift)" not in out["remove"][0]["reason"]
+
+
+def test_a_page_that_belongs_to_the_neighbouring_row_goes_even_when_it_shares_words_with_its_own_row():
+    rows = [row("A-1", SHARK_FILTER, "Sheet1", 2), row("B-2", SHARK, "Sheet1", 3)]
+    out = rwc.plan_wrong_content(["A-1"], rows, {"A-1": lst(SHARK)}, keep_at=0.25)
+    assert [r["sku"] for r in out["remove"]] == ["A-1"]
+    assert "(shift)" in out["remove"][0]["reason"] and "row 3" in out["remove"][0]["reason"]
+
+
+def test_a_neighbour_too_far_away_or_on_another_tab_is_no_shift():
+    far = [row("A-1", SHARK_FILTER, "Sheet1", 2), row("B-2", SHARK, "Sheet1", 9)]
+    assert rwc.plan_wrong_content(["A-1"], far, {"A-1": lst(SHARK)}, keep_at=0.25)["remove"] == []
+    other_tab = [row("A-1", SHARK_FILTER, "Sheet1", 2), row("B-2", SHARK, "Amazon", 3)]
+    assert rwc.plan_wrong_content(["A-1"], other_tab, {"A-1": lst(SHARK)}, keep_at=0.25)["remove"] == []
+
+
+def test_a_page_that_matches_its_own_row_is_never_a_shift():
+    rows = [row("A-1", SHARK, "Sheet1", 2), row("B-2", SHARK, "Sheet1", 3)]
+    out = rwc.plan_wrong_content(["A-1"], rows, {"A-1": lst(SHARK)}, keep_at=0.25)
+    assert out["remove"] == [] and "matches the row" in out["held"][0][1]
+
+
+def test_a_same_product_listing_is_never_removed_whatever_the_overlap():
+    out = rwc.plan_wrong_content(["A-1"], [row("A-1", ROXEL)], {"A-1": lst(SHARK)}, keep_at=0.25, same_product={"A-1"})
+    assert out["remove"] == [] and "same_product_skus.txt" in out["held"][0][1]
+    out = rwc.plan_wrong_content(["0123"], [row("0123", ROXEL)], {"0123": lst(SHARK)}, keep_at=0.25, same_product={"123"})
+    assert out["remove"] == []                                                        # either zero spelling counts
+
+
+def test_wanted_skus_come_from_the_env_or_else_from_the_hand_off_file(tmp_path):
+    f = tmp_path / "held_at_zero.txt"
+    f.write_text("111\n# a comment\n222  # note\n111\n", encoding="utf-8")
+    assert rwc.wanted_skus("A, B,A", str(f)) == ["A", "B"]                             # the env wins, de-duplicated
+    assert rwc.wanted_skus("", str(f)) == ["111", "222"]
+    assert rwc.wanted_skus("", str(tmp_path / "missing.txt")) == []
+
+
+def test_an_empty_hand_off_file_is_a_quiet_run(monkeypatch, tmp_path, capsys):
+    calls = _setup(monkeypatch, tmp_path, ROWS, LISTINGS, [], dry_run=False)
+    monkeypatch.setattr(rwc, "SKUS_FILE", "held_at_zero.txt")
+    rwc.main()
+    assert calls == [] and (tmp_path / "onbuy_delete_list.txt").read_text() == ""
+    assert "nothing to remove" in capsys.readouterr().out
+
+
+def test_without_a_hand_off_file_an_empty_sku_list_is_still_an_error(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path, ROWS, LISTINGS, [], dry_run=False)
+    monkeypatch.setattr(rwc, "SKUS_FILE", "")
+    with pytest.raises(SystemExit):
+        rwc.main()
+
+
+def test_clean_holds_drops_only_the_skus_whose_rows_really_went(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path, ROWS, LISTINGS, ["A-1", "C-3"], dry_run=False, stuck=("C-3",))
+    forgotten = []
+    monkeypatch.setattr(rwc.held_skus, "forget", lambda skus: forgotten.append(sorted(skus)) or len(skus))
+    monkeypatch.setattr(rwc, "CLEAN_HOLDS", True)
+    rwc.main()
+    assert forgotten == [["A-1"]]                                                     # C-3 is still on the sheet: it keeps its hold
+
+
+def test_the_nightly_deletes_between_the_zero_passes_and_the_audit():
+    for name in ("nightly_reconcile.yml", "backfill_onbuy_status.yml"):
+        path = ROOT / ".github" / "workflows" / name
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "remove_wrong_content.py" not in text:
+            continue                                                                    # a store whose nightly lives in the other file
+        step = text.index("python remove_wrong_content.py")
+        assert text.rindex("python zero_stock_mismatched.py") < step < text.index("python audit_price_drift.py")
+        block = text[text.rindex("- name:", 0, step):step]
+        assert 'KEEP_AT: "0.25"' in block and 'CLEAN_HOLDS: "1"' in block and "SKUS_FILE: held_at_zero.txt" in block and 'DRY_RUN: "0"' in block
+        assert "continue-on-error: true" in block
+        assert "python delete_listings_batch.py" in text[step:text.index("python audit_price_drift.py")]
+        return
+    raise AssertionError("no nightly workflow carries the delete step")

@@ -2,6 +2,3 @@
 # (same brand, near-identical words). The nightly price/stock audit holds them at stock 0 instead of pushing the sheet's stock.
 # Remove a line only after the listing's content has been repaired (and then from protected_skus.txt too).
 # 2026-10-12 borderline flags (same type, other model/spec/brand): the user ordered them FROZEN at stock 0, not deleted - release only after the page/row is fixed
-708901210664  # row = dehumidifier 1800 ml tank, ultra quiet, auto defrost; page = LOEFME 10 L/day dehumidifier with digital display - other model/capacity
-969464819965  # row = ice maker 15 kg/24h, 13 ice thickness levels, LED display; page = 1.4 L automatic ice maker with self-cleaning - other model/capacity
-193036826772  # row = SMART RGB ultra-thin ceiling light; page = plain LED round panel down light - smart/RGB feature differs

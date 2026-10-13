@@ -104,3 +104,20 @@ def test_nothing_is_written_in_a_dry_run_or_when_the_switch_is_off(monkeypatch):
 
 def test_the_switch_is_off_by_default_so_tests_and_one_off_runs_never_write_files():
     assert flows.zero.PERSIST_HOLDS is False
+
+
+
+# ---------------------------------------------------------------- held_skus.forget (a deleted listing needs no hold)
+def test_forget_drops_the_skus_lines_from_both_files_and_keeps_the_rest(tmp_path):
+    (tmp_path / PROTECTED).write_bytes(b"# header\r\n111  # a\r\n0222  # b\r\n333\r\n")
+    (tmp_path / HOLD).write_text("# header\n222\n444  # keep\n", encoding="utf-8")
+    assert held_skus.forget(["222", "333", "999"], str(tmp_path)) == 3
+    assert (tmp_path / PROTECTED).read_bytes() == b"# header\r\n111  # a\r\n"                  # both zero spellings go, CRLF kept, comments stay
+    assert (tmp_path / HOLD).read_text(encoding="utf-8") == "# header\n444  # keep\n"
+
+
+def test_forget_touches_nothing_when_nothing_matches_and_tolerates_a_missing_file(tmp_path):
+    (tmp_path / PROTECTED).write_text("# header\n111\n", encoding="utf-8")
+    before = (tmp_path / PROTECTED).read_bytes()
+    assert held_skus.forget(["555", ""], str(tmp_path)) == 0
+    assert (tmp_path / PROTECTED).read_bytes() == before and not (tmp_path / HOLD).exists()

@@ -124,6 +124,35 @@ jobs:
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           PERSIST_HOLDS: "1"
         run: python zero_stock_mismatched.py
+      # User 2026-10-13: "Delist every wrong listing from now and in future" - the listings the zero pass just found showing another product are
+      # DELETED (the sheet row copied to a backup tab first, then the OnBuy listing), not frozen. Borderlines (word overlap 0.25-0.5, mostly the same
+      # product worded differently) stay frozen for a human; same_product_skus.txt is never touched; the removed SKUs leave the hold lists before the
+      # commit step below commits them. More than 60 in one night = refused (a broken read, not a clean-up).
+      - name: Delete the listings that show another product (rows backed up first)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          SKUS_FILE: held_at_zero.txt
+          KEEP_AT: "0.25"
+          MAX_REMOVE: "60"
+          BACKUP_TAB: "Removed wrong content (nightly)"
+          DRY_RUN: "0"
+          CLEAN_HOLDS: "1"
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: |
+          python remove_wrong_content.py
+          if grep -q . onbuy_delete_list.txt 2>/dev/null; then
+            DELETE_SKUS_FILE=onbuy_delete_list.txt DRY_RUN=0 python delete_listings_batch.py
+          else
+            echo "no listing to delete on OnBuy"
+          fi
       - name: Price/stock audit with fix (defended SKUs excluded)
         if: ${{ !cancelled() }}
         env:

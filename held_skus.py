@@ -123,3 +123,35 @@ def persist_holds(items, base_dir=HERE, today=None):
             fh.write((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
         added.update(sku for sku, _ in new)
     return sorted(added)
+
+
+def forget(skus, base_dir=HERE):
+    """Drop the lines of these SKUs (either zero spelling) from protected_skus.txt and hold_at_zero_skus.txt: a listing that has been DELETED needs no hold
+    (the nightly removes wrong-content listings since 2026-10-13). Comment lines and line endings stay. Returns how many lines went."""
+    forms = set()
+    for s in skus:
+        s = str(s or "").strip()
+        if s:
+            forms |= _forms(s)
+    gone = 0
+    for fname in (PROTECTED_FILE, HOLD_FILE):
+        path = os.path.join(base_dir, fname)
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+        except OSError:
+            continue
+        crlf = b"\r\n" in raw
+        lines = raw.decode("utf-8").replace("\r\n", "\n").split("\n")
+        keep = []
+        for ln in lines:
+            tok = ln.split("#", 1)[0].strip()
+            if tok and _forms(tok) & forms:
+                gone += 1
+                continue
+            keep.append(ln)
+        if len(keep) != len(lines):
+            text = "\n".join(keep)
+            with open(path, "wb") as fh:
+                fh.write((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+    return gone

@@ -16,6 +16,12 @@ Open orders do NOT hold a removal back (user: "despite getting the wrong order")
 Supabase is not touched - the SKU registry keeps the barcode, so nobody can re-use it silently.
 
 Env: SKUS (comma-separated, exact), DRY_RUN (default 1), MAX_REMOVE (40), BACKUP_TAB, KEEP_AT (0.5), SHEET_NAME.
+
+UNATTENDED in the nightly (user 2026-10-13: "Delist every wrong listing from now and in future"): SKUS_FILE = the zero pass's hand-off file (every listing it
+found showing another product) instead of SKUS; a SKU on same_product_skus.txt (checked by hand) is never removed; a page that belongs to a NEIGHBOURING row
+(the CSV-era one-row shift) is removed even when it shares a few words with its own row; with KEEP_AT below the scan's 0.5 line the borderline band
+(KEEP_AT .. 0.5, mostly the same product worded differently) stays frozen for a human instead of being deleted; CLEAN_HOLDS=1 drops the removed SKUs' lines
+from protected_skus.txt + hold_at_zero_skus.txt. An empty hand-off file is a normal, quiet run.
 """
 import csv
 import json
@@ -27,6 +33,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 import adoption_guard
 import guarded_remove_rows as grr
+import held_skus
 import sheet_tabs
 from onbuy_client import OnBuyClient
 from retry_utils import with_retry
@@ -34,7 +41,24 @@ from retry_utils import with_retry
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
 MAX_REMOVE = int(os.getenv("MAX_REMOVE") or "40")
 KEEP_AT = float(os.getenv("KEEP_AT") or "0.5")
-WANT = list(dict.fromkeys(s.strip() for s in (os.getenv("SKUS") or "").split(",") if s.strip()))
+SKUS_FILE = (os.getenv("SKUS_FILE") or "").strip()                 # the nightly: the zero pass's hand-off file, one SKU per line
+CLEAN_HOLDS = (os.getenv("CLEAN_HOLDS") or "").strip().lower() in ("1", "yes", "true")
+MATCH_LINE = 0.5                                                     # the scan's own line: at or above it the page IS the row's product
+# Listings checked BY HAND: the live page IS this row's product, only worded differently - never removed, whatever the overlap says.
+SAME_PRODUCT = held_skus.load_skus(os.path.join(held_skus.HERE, "same_product_skus.txt"))
+
+
+def wanted_skus(env_skus=None, skus_file=None):
+    """The SKUs to consider: SKUS (comma-separated) or, when that is empty, the lines of SKUS_FILE (comments allowed; a missing file = none)."""
+    skus = [s.strip() for s in (env_skus if env_skus is not None else (os.getenv("SKUS") or "")).split(",") if s.strip()]
+    path = skus_file if skus_file is not None else SKUS_FILE
+    if not skus and path and os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            skus = [ln.split("#", 1)[0].strip() for ln in fh if ln.split("#", 1)[0].strip()]
+    return list(dict.fromkeys(skus))
+
+
+WANT = wanted_skus()
 
 
 def read_listings(onbuy, skus):
@@ -49,10 +73,32 @@ def read_listings(onbuy, skus):
     return listings, errors
 
 
-def plan_wrong_content(approved, rows, listings, keep_at=KEEP_AT, errors=None):
+def shifted_from(rows, r, name, min_similarity=MATCH_LINE, reach=3):
+    """The neighbouring row (within `reach` rows on the same tab) whose title the listing's name belongs to - the CSV-era one-row shift - as
+    (row, similarity), or None. The best-matching neighbour wins."""
+    best = None
+    for other in rows:
+        if other is r or other["tab"] != r["tab"] or abs(int(other["row"]) - int(r["row"])) > reach:
+            continue
+        t = str(other.get("title") or "").strip()
+        if not t:
+            continue
+        sim = adoption_guard.title_similarity(name, t)
+        if sim >= min_similarity and (best is None or sim > best[1]):
+            best = (other, sim)
+    return best
+
+
+def plan_wrong_content(approved, rows, listings, keep_at=KEEP_AT, errors=None, same_product=None):
     """approved: SKUs asked for. rows: sheet rows (dicts with tab, row, sku, title, stock, ...). listings: {sku: OnBuy record or None}.
-    errors: {sku: text} for reads that failed. -> {"remove": [row dict + reason + overlap + onbuy_name], "held": [(sku, reason)]}"""
+    errors: {sku: text} for reads that failed. same_product: SKUs checked by hand (never removed).
+    -> {"remove": [row dict + reason + overlap + onbuy_name], "held": [(sku, reason)]}
+
+    A listing goes when its page shares less than keep_at of its words with the row (another product), or when the page belongs to a neighbouring
+    row (a shift) more than to its own. Between keep_at and the scan's match line it is a borderline - held (frozen) for a human; at or above the
+    match line the page is the row's product."""
     errors = errors or {}
+    same_product = same_product or set()
     by_sku = {}
     for r in rows:
         if r["sku"]:
@@ -69,6 +115,9 @@ def plan_wrong_content(approved, rows, listings, keep_at=KEEP_AT, errors=None):
         if sku in errors:
             held.append((sku, f"the OnBuy read failed ({errors[sku]}) - not touched"))
             continue
+        if held_skus.is_held(sku, same_product):
+            held.append((sku, "on same_product_skus.txt (checked by hand: the page is this product, worded differently) - never removed"))
+            continue
         lst = listings.get(sku)
         if not lst:
             held.append((sku, "no live OnBuy listing under this SKU - nothing to delete"))
@@ -79,10 +128,15 @@ def plan_wrong_content(approved, rows, listings, keep_at=KEEP_AT, errors=None):
             held.append((sku, "the listing name or the row title is empty - cannot compare"))
             continue
         overlap = adoption_guard.title_similarity(name, title)
-        if overlap >= keep_at:
+        if overlap >= MATCH_LINE:
             held.append((sku, f"the OnBuy page now matches the row (word overlap {overlap:.2f}) - not wrong content"))
             continue
-        remove.append(dict(rs[0], reason=f"wrong content: OnBuy shows '{name[:60]}'", overlap=overlap, onbuy_name=name,
+        shift = shifted_from(rows, rs[0], name) if overlap < MATCH_LINE else None
+        if overlap >= keep_at and not (shift and shift[1] > overlap):
+            held.append((sku, f"borderline (word overlap {overlap:.2f}: below the match line, not clearly another product) - left frozen for review"))
+            continue
+        why = f"wrong content: OnBuy shows '{name[:60]}'" + (f" - the product of {shift[0]['tab']} row {shift[0]['row']} (shift)" if shift else "")
+        remove.append(dict(rs[0], reason=why, overlap=overlap, onbuy_name=name,
                            onbuy_opc=str(lst.get("product_encoded_id") or lst.get("opc") or ""),
                            onbuy_stock=lst.get("stock")))
     return {"remove": remove, "held": held}
@@ -119,6 +173,10 @@ def load_tabs(book):
 
 def main():
     if not WANT:
+        if SKUS_FILE:
+            print(f"no SKU in {SKUS_FILE} - nothing to remove")
+            open("onbuy_delete_list.txt", "w", encoding="utf-8").close()
+            return
         raise SystemExit("SKUS required")
     book = open_book()
     tabs, headers_by_tab, rows = load_tabs(book)
@@ -130,7 +188,7 @@ def main():
         raise SystemExit("OnBuy auth failed")
     listings, errors = read_listings(onbuy, WANT)
 
-    out = plan_wrong_content(WANT, rows, listings, errors=errors)
+    out = plan_wrong_content(WANT, rows, listings, errors=errors, same_product=SAME_PRODUCT)
     remove, held = out["remove"], out["held"]
     print(f"\nWILL REMOVE {len(remove)} row(s) and their OnBuy listings:")
     for r in sorted(remove, key=lambda x: (x["tab"], x["row"])):
@@ -179,6 +237,9 @@ def main():
         with open("onbuy_delete_list.txt", "w", encoding="utf-8") as fh:
             fh.write("\n".join(sorted({r["sku"] for r in remove} - keep)) + "\n")
         print(f"{len(keep)} SKU(s) kept out of the OnBuy delete list because their row is still on the sheet")
+    if CLEAN_HOLDS:
+        gone = held_skus.forget([r["sku"] for r in remove if r["sku"] not in keep])
+        print(f"hold lists (protected_skus.txt + hold_at_zero_skus.txt): {gone} line(s) dropped for the removed SKUs")
 
 
 if __name__ == "__main__":
