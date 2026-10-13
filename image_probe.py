@@ -28,21 +28,32 @@ def sheet_rows(n):
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
         json.loads(os.environ["GOOGLE_CREDENTIALS"]),
         ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
-    ws = sheet_tabs.product_sheet(gspread.authorize(creds).open(SHEET_NAME))
-    values = ws.get_all_values()
-    h = [str(x).strip() for x in values[0]]
-    ix = {k: h.index(k) for k in ("SKU", "Stock", "Image URL", "Title") if k in h}
+    book = gspread.authorize(creds).open(SHEET_NAME)
+    tabs = [sheet_tabs.product_sheet(book)]
+    try:
+        amz = book.worksheet(sheet_tabs.AMAZON_TAB)
+        if amz.title != tabs[0].title:
+            tabs.append(amz)
+    except gspread.exceptions.WorksheetNotFound:
+        pass
     out = []
-    for r in values[1:]:
-        cell = lambda k: (str(r[ix[k]]).strip() if k in ix and ix[k] < len(r) else "")   # noqa: E731
-        sku = cell("SKU").replace(",", "")
-        if not sku or cell("Stock") in ("", "0"):
-            continue
-        if WANT and sku not in WANT:
-            continue
-        out.append((sku, cell("Image URL"), cell("Title")[:50]))
-        if len(out) >= n:
-            break
+    for ws in tabs:
+        values = ws.get_all_values()
+        h = [str(x).strip() for x in values[0]]
+        ix = {k: h.index(k) for k in ("SKU", "Stock", "Image URL", "Title") if k in h}
+        for r in values[1:]:
+            cell = lambda k: (str(r[ix[k]]).strip() if k in ix and ix[k] < len(r) else "")   # noqa: E731
+            sku = cell("SKU").replace(",", "")
+            if not sku:
+                continue
+            if WANT:
+                if sku not in WANT:
+                    continue
+            elif cell("Stock") in ("", "0"):
+                continue
+            out.append((sku, cell("Image URL"), f"{ws.title}: {cell('Title')[:45]}"))
+            if len(out) >= n:
+                return out
     return out
 
 
