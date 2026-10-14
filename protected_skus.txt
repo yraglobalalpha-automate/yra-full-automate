@@ -4,3 +4,5 @@
 703123011372
 # 2026-10-05 nightly-flagged listings showing another product, zeroed on the user's instruction - kept at 0 so the sync cannot re-stock them
 # 2026-10-12 borderline flags (same type, other model/spec/brand): the user ordered them FROZEN at stock 0, not deleted - release only after the page/row is fixed
+# 2026-10-14 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+213901619770  # Sheet1 row 3505: row = 3PCS Solar Power Dummy Security Camera Fake L | page = 4x Solar Powered PIR Motion Sensor Lamp Clip
