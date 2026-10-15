@@ -79,15 +79,16 @@ def read_tab(sheet):
     column read (the hole behind the 08-29 wrong-content creates). Leading
     zeros survive via displayed text. Returns None if the tab would not
     hold still."""
-    headers = sheet.row_values(1)
+    # Every Google read is retried (2026-10-15): a transient Google 503 crashed the Makstore backfill on 2026-10-13 (run 38483223288).
+    headers = with_retry(lambda: sheet.row_values(1), what=f"read {sheet.title} header", max_attempts=3)
     col_map = {col: idx + 1 for idx, col in enumerate(headers)}
     sku_display, data = [], []
     for _stab in range(3):
-        sku_display = sheet.col_values(col_map["SKU"]) if "SKU" in col_map else []
-        data = sheet.get_all_records()
+        sku_display = with_retry(lambda: sheet.col_values(col_map["SKU"]), what=f"read {sheet.title} SKU column", max_attempts=3) if "SKU" in col_map else []
+        data = with_retry(sheet.get_all_records, what=f"read {sheet.title} records", max_attempts=3)
         if "SKU" not in col_map:
             break
-        if sheet.col_values(col_map["SKU"]) == sku_display:
+        if with_retry(lambda: sheet.col_values(col_map["SKU"]), what=f"read {sheet.title} SKU column", max_attempts=3) == sku_display:
             break
         print(f"[{sheet.title}] Sheet changed during the read - re-reading for a consistent snapshot")
     else:
