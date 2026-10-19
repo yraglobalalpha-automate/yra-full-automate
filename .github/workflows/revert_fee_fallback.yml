@@ -1,0 +1,42 @@
+name: Revert Fee Fallback Prices
+
+# User 2026-10-19 ("Build the YRA revert and run"): the fee tier tables were missing from 2026-10-15 to 10-19, so the syncs priced every row they
+# visited with the flat 24% fee instead of the category rate (prices ~8-20% too high, Fee % cells 24.00). This puts those rows - and only those: the
+# automation's own prices carrying the fallback's signature - back on the formula with the category fee, exactly as the sync will when it next visits
+# them. Dry run by default; apply=yes backs the old values up to a sheet tab first. Sheet only: Audit Price Drift fix=yes (or the nightly) pushes to OnBuy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "yes = write the prices (old values backed up to a sheet tab first); anything else = dry run"
+        required: false
+        default: "no"
+      max_changes:
+        description: "Stop (write nothing) when more prices than this would change"
+        required: false
+        default: "7000"
+
+jobs:
+  revert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Revert the flat-fee prices
+        env:
+          APPLY: ${{ inputs.apply }}
+          MAX_CHANGES: ${{ inputs.max_changes }}
+          FEE_MODE: ${{ vars.FEE_MODE || 'category' }}
+          FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
+          PROFIT_ABOVE_50_PERCENT: ${{ vars.PROFIT_ABOVE_50_PERCENT }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python -u revert_fee_fallback.py
