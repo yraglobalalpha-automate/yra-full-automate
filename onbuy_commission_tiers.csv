@@ -1,0 +1,30 @@
+Tier ID,Name,Lower %,Upper %,Threshold (£),Min Fee (£)
+9ccfe96a-49ad-472d-95fb-3029dee54069,"Arts, Crafts & Sewing",15.00,,,0.25
+9ccfe96a-5232-4864-b848-51c93b23881a,Baby & Toddler,8.00,15.00,10.00,0.25
+9ccfe96a-aca6-4382-98d2-a69f6be78bd6,"Beer, Wine & Spirits",10.00,,,0.25
+9ccfe96a-5a4c-4be4-a347-7545fd861525,Books,15.00,,,0.25
+9ccfe96a-623c-4100-91b2-a5e7982b13a6,"Business, Office & Industrial Supplies",15.00,,,0.25
+9ccfe96a-7324-4ddd-99a4-4c93158fc516,Car & Automotive Parts,15.00,9.00,45.00,0.25
+9ccfe96a-9348-44fe-9c55-fd8943768562,"Clothing, Shoes & Accessories",15.00,,,0.25
+9ccfe96a-6a76-4522-8337-bea4f660a8ce,Consumer Electronics,7.00,,,0.25
+9ccfe96a-82e7-4089-a9ff-f751e8c3cf93,DIY & Tools,13.00,,,0.25
+9ccfe96a-8b11-4222-bd32-f306fc9e7484,Electronic Accessories,15.00,8.00,100.00,0.25
+9ccfe96a-7acc-4555-8227-184f0d849d60,Everything else,15.00,,,0.25
+9ccfe96a-a45d-4968-a35b-f1287d2c4bc9,Food & Drink,8.00,15.00,10.00,0.25
+9ccfe96a-bc8e-448d-96ac-9aa157f0b851,Furniture,15.00,10.00,175.00,0.25
+9ccfe96a-ec6d-4a22-8a0b-797a283969ec,Games Consoles,8.00,,,0.25
+9ccfe96a-b417-442e-b32f-c134288b4207,Health & Beauty,8.00,15.00,10.00,0.25
+9ccfe96a-dba1-4b3d-9b4e-dc78a0836077,Jewellery,20.00,5.00,,0.25
+2d572e54-2fbd-4802-8e56-b577eb267e8b,Jewellery,20.00,,,0.25
+9ccfe96a-408c-46a5-80ac-ad11c306a59b,Large Appliances,7.00,,,0.25
+9ccfe96a-e389-442c-b8b5-eabf2be991fe,"Music, VHS, DVD",15.00,,,0.25
+9ccfe96a-fc67-4dfe-83f7-42eabdab9081,Musical Instruments & DJ,12.00,,,0.25
+9ccfe96a-d403-43e5-9aa8-c93e27a08080,Pet Supplies,15.00,,,0.25
+9ccfe96a-c425-4fd4-afa4-31a6fec9e365,Power Tools,13.00,,,0.25
+9ccfe96a-cc06-4a07-8adb-bb2559d15fcd,Small Appliances,15.00,,,0.25
+9ccfe96a-9b69-4071-b0b2-3502d59490bb,Software,15.00,,,0.25
+9ccfe96b-0475-4c53-afee-b798ab63598a,Sports & Outdoors,15.00,,,0.25
+d2722109-c832-45ba-a1cd-28523c319250,Standard Selling Fee,15.00,,,0.25
+9ccfe96b-0cfa-4086-819c-db90e39c51ee,Toys & Games,15.00,,,0.25
+9ccfe96a-f45d-410a-a3af-68f559ee083a,Video Games,15.00,,,0.25
+9ccfec3c-5f02-11ef-b54d-0242ac120003,Watches,15.00,5.00,225.00,0.25
