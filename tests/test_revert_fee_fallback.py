@@ -33,7 +33,7 @@ def test_plan_reverts_only_the_automations_own_price_with_the_signature_and_a_di
     assert rf.plan_row(d(existing=36.84, selling=34.15), "24.00", frozen=True) == ("skip", "frozen wrong-content listing")
     assert rf.plan_row(None, "24.00") == ("skip", "no cost")
     assert rf.plan_row(d(existing=34.15, selling=34.15), "24.00") == ("ok", "already on the formula")
-    assert rf.plan_row(d(existing=36.84, selling=34.15), "18.00") == ("ok", "no fallback signature")   # not the flat price either
+    assert rf.plan_row(d(existing=35.00, selling=34.15), "18.00") == ("ok", "no fallback signature")   # neither the 24 cell nor the flat price
 
 
 def test_new_cells_are_what_the_sync_writes():
