@@ -9,3 +9,5 @@
 # 2026-10-16 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
 194003621413  # Sheet1 row 1077: row = 9000000mAh Power Bank Magnetic Battery Pack W | page = POWER BANK FOR ELECTRIC HEATED VEST JACKET BO
 # 2026-10-17 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+# 2026-10-21 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+# 2026-10-21 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
