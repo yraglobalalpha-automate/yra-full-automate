@@ -5,7 +5,8 @@ Why: 3D printers were filed under "Electronics & Technology > Computing & Gaming
 and charged 15% on Makstore orders T6QR55D / T6Q6FJQ. The sheet's category decides the fee in the price formula, so the rows must carry the
 category OnBuy really uses. RULES: one rule per line, "<title regex> => <OnBuy category path>" (case-insensitive; the path must be listable in
 onbuy_categories_only.csv, its ID is looked up there); first matching rule wins. Default rules = the 3D printing family. ONLY_FROM (regex on
-the row's current Category; default: any) limits which rows move; a row already on the rule's path is skipped.
+the row's current Category; default: any) limits which rows move; a row already on the rule's path - or, unless SKIP_SAME_FAMILY=0, on a
+sibling leaf of the same family (e.g. filament rows whose title also says "3D Printer") - is skipped.
 APPLY=yes writes Category + Category ID (old values first go to a backup tab "Categories relabelled <date>"); otherwise it prints the plan.
 Live listings keep their OnBuy product (updates never send a category); the sync re-prices from the new tier at its next visit.
 Prints no cost cell. Env: APPLY, RULES, ONLY_FROM, SHEET_NAME."""
@@ -27,6 +28,7 @@ from retry_utils import with_retry  # noqa: E402
 APPLY = (os.getenv("APPLY") or "").strip().lower() in ("1", "yes", "true")
 SHEET_NAME = os.getenv("SHEET_NAME") or "__SHEET__"
 ONLY_FROM = re.compile(os.getenv("ONLY_FROM"), re.I) if (os.getenv("ONLY_FROM") or "").strip() else None
+SKIP_SAME_FAMILY = (os.getenv("SKIP_SAME_FAMILY") or "1").strip().lower() not in ("0", "no", "false")
 # Machines first, but "3D Printer Filament / Pen / Dryer / Enclosure ..." is the consumable or accessory, not the machine (lookahead);
 # a printer whose title merely mentions the filament it ships with stays a printer. Then pens, then filament.
 DEFAULT_RULES = """
@@ -109,8 +111,8 @@ def main():
                 if not pat.search(title):
                     continue
                 old_cat, old_cid = cell(r, "Category"), cell(r, "Category ID")
-                if old_cat.lower() == path.lower():
-                    same += 1
+                if old_cat.lower() == path.lower() or (SKIP_SAME_FAMILY and old_cat.lower().rsplit(" > ", 1)[0] == path.lower().rsplit(" > ", 1)[0]):
+                    same += 1        # already on the path, or already on a sibling leaf of the same family (same tier; leaf precision is the team's call)
                 elif ONLY_FROM and not ONLY_FROM.search(old_cat):
                     pass
                 else:
