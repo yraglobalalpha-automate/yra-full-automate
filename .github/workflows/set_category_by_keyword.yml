@@ -1,0 +1,43 @@
+name: Set Category By Keyword (sheet only)
+
+# Relabels rows whose Title matches a pattern to the OnBuy category their commission really follows (default: the 3D printing
+# family -> Arts, Crafts & Sewing > Other Crafts > 3D Printing). Writes Category + Category ID only, after a backup tab; the sync
+# re-prices from the new tier. Dry run unless apply=yes. Prints no cost cell.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "yes = write (anything else = dry run)"
+        required: false
+        default: ""
+      rules:
+        description: "One rule per line: <title regex> => <OnBuy category path> (empty = the 3D printing rules)"
+        required: false
+        default: ""
+      only_from:
+        description: "Only rows whose current Category matches this regex (empty = any)"
+        required: false
+        default: ""
+
+jobs:
+  relabel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Relabel
+        env:
+          APPLY: ${{ inputs.apply }}
+          RULES: ${{ inputs.rules }}
+          ONLY_FROM: ${{ inputs.only_from }}
+          FEE_MODE: category
+          SHEET_NAME: YRA_Full_Feed_Master
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: python -u set_category_by_keyword.py

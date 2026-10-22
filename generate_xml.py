@@ -285,6 +285,21 @@ def parse_time(value):
 # stemmed (category_match_tokens conventions) and add sparingly - one
 # phrase covers a whole device family, unlike per-SKU curation.
 TITLE_PHRASE_CATEGORIES = (
+    # 2026-10-22: 3D printers are not document printers. The scorer filed them under Computing & Gaming > Printers (Consumer
+    # Electronics, 7%) while OnBuy keeps 3D printing under Arts, Crafts & Sewing (Standard 15%) and charged 15% anyway (Makstore
+    # orders T6QR55D / T6Q6FJQ). Consumables before the machines: first match wins.
+    (("3d", "printer", "filament"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printer Filament"),
+    (("3d", "printing", "filament"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printer Filament"),
+    (("printer", "filament"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printer Filament"),
+    (("pla", "filament"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printer Filament"),
+    (("petg", "filament"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printer Filament"),
+    (("abs", "filament"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printer Filament"),
+    (("tpu", "filament"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printer Filament"),
+    (("3d", "printing", "pen"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printing Pens"),
+    (("3d", "pen"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printing Pens"),
+    (("3d", "printer"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printers"),
+    (("3d", "printing"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printers"),
+    (("resin", "printer"), "Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printers"),
     (("smart", "tv"), "Electronics & Technology > TV & Audio > TVs & Accessories > TVs"),
     (("led", "tv"), "Electronics & Technology > TV & Audio > TVs & Accessories > TVs"),
     (("oled", "tv"), "Electronics & Technology > TV & Audio > TVs & Accessories > TVs"),

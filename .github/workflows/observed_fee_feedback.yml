@@ -1,0 +1,57 @@
+name: Observed Fee Feedback (orders -> Fee % overrides)
+
+# OnBuy's commission follows the category of ITS catalogue product, not our sheet's category. This reads the commission OnBuy
+# actually took on recent orders and, per SKU it under-charges, writes the real rate into the row's Fee % cell as a per-row
+# override (the sync re-prices from it). Dry run unless apply=yes; old values go to a backup tab first. Prints no cost cell.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "yes = write the Fee % overrides (anything else = dry run)"
+        required: false
+        default: ""
+      days:
+        description: "How many days of orders to read"
+        required: false
+        default: "90"
+      max_pages:
+        description: "Pages of 100 orders to read at most"
+        required: false
+        default: "30"
+      only_skus:
+        description: "Limit to these SKUs (comma-separated; empty = every ordered SKU)"
+        required: false
+        default: ""
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  feedback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Orders -> Fee % overrides
+        env:
+          APPLY: ${{ inputs.apply }}
+          DAYS: ${{ inputs.days }}
+          MAX_PAGES: ${{ inputs.max_pages }}
+          ONLY_SKUS: ${{ inputs.only_skus }}
+          FEE_MODE: category
+          SHEET_NAME: YRA_Full_Feed_Master
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: python -u observed_fee_feedback.py
