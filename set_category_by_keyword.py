@@ -31,7 +31,7 @@ ONLY_FROM = re.compile(os.getenv("ONLY_FROM"), re.I) if (os.getenv("ONLY_FROM") 
 SKIP_SAME_FAMILY = (os.getenv("SKIP_SAME_FAMILY") or "1").strip().lower() not in ("0", "no", "false")
 # Machines first, but "3D Printer Filament / Pen / Dryer / Enclosure ..." is the consumable or accessory, not the machine (lookahead);
 # a printer whose title merely mentions the filament it ships with stays a printer. Then pens, then filament.
-DEFAULT_RULES = """
+DEFAULT_RULES = r"""
 (3d[ -]?print(er|ing)s?|resin printers?)(?!\s*[-:,]?\s*(filaments?|pens?|dryers?|enclosures?|nozzles?|accessor|parts?|kits?|beds?|plates?|resin\b)) => Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printers
 3d[ -]?(printing[ -]?)?pens? => Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printing Pens
 filament => Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printer Filament
