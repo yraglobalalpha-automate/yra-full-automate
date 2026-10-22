@@ -31,6 +31,7 @@ jobs:
         env:
           KEYWORDS: ${{ inputs.keywords }}
           SHOW: ${{ inputs.show }}
+          FEE_MODE: category
           SHEET_NAME: YRA_Full_Feed_Master
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: python -u category_keyword_census.py

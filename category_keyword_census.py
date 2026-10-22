@@ -11,6 +11,8 @@ import os
 import re
 from collections import Counter, defaultdict
 
+os.environ.setdefault("FEE_MODE", "category")   # before fees is imported: it reads FEE_MODE at import time
+
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -31,7 +33,6 @@ def num(v):
 
 
 def main():
-    os.environ.setdefault("FEE_MODE", "category")
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
         json.loads(os.environ["GOOGLE_CREDENTIALS"]),
         ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
