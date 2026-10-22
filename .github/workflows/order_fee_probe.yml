@@ -19,6 +19,10 @@ on:
         description: "Order status filter (all, awaiting_dispatch, dispatched, complete, cancelled, refunded ...)"
         required: false
         default: "all"
+      keys:
+        description: "1 = also print the key paths of one matching order (category / commission / sku values only, never a buyer field)"
+        required: false
+        default: ""
       max_pages:
         description: "Pages of 100 orders to read at most"
         required: false
@@ -46,6 +50,7 @@ jobs:
           DAYS: ${{ inputs.days }}
           STATUS: ${{ inputs.status }}
           MAX_PAGES: ${{ inputs.max_pages }}
+          KEYS: ${{ inputs.keys }}
           SHEET_NAME: YRA_Full_Feed_Master
           FEE_MODE: ${{ vars.FEE_MODE }}
           FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}

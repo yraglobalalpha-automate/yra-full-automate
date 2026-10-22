@@ -21,6 +21,25 @@ DAYS = int(os.getenv("DAYS") or "30")
 MAX_PAGES = int(os.getenv("MAX_PAGES") or "30")
 STATUS = (os.getenv("STATUS") or "all").strip()
 WANT = {s.strip().lstrip("0") or s.strip() for s in (os.getenv("SKUS") or "").split(",") if s.strip()}
+KEYS = (os.getenv("KEYS") or "").strip().lower() in ("1", "true", "yes")
+SHOW_VALUE = re.compile(r"categor|commission|tier|fee|rate|sku|opc|quantity|price", re.I)
+HIDE = re.compile(r"name|email|address|phone|postcode|tracking|note|message", re.I)
+
+
+def key_paths(node, prefix=""):
+    """Every key path of an order (values shown only for money / category / sku keys, never a buyer field)."""
+    out = []
+    if isinstance(node, dict):
+        for k, v in node.items():
+            path = f"{prefix}.{k}" if prefix else str(k)
+            if isinstance(v, (dict, list)):
+                out += key_paths(v, path)
+            else:
+                out.append(f"{path}={v!r}" if SHOW_VALUE.search(str(k)) and not HIDE.search(str(k)) else path)
+    elif isinstance(node, list):
+        for i, v in enumerate(node[:2]):
+            out += key_paths(v, f"{prefix}[{i}]")
+    return out
 SHEET_NAME = os.getenv("SHEET_NAME") or "OnBuy_Feed_Master"
 MONEY_KEY = re.compile(r"(price|fee|commission|vat|tax|total|discount|delivery|quantity|amount|subtotal)", re.I)
 NOT_MONEY = re.compile(r"(id\b|_id|reference|capture|transaction|address|name|email|phone|tracking|postcode|country|tag|service)", re.I)
@@ -71,7 +90,7 @@ def order_time(o):
 
 
 def sheet_rules():
-    """SKU -> (tab, category id, tier name, lower %, upper %, threshold) from the sheet, or {} when it cannot be read."""
+    """SKU -> (tab, category id, tier name, lower %, upper %, threshold, category path, Fee % cell) from the sheet, or {} when it cannot be read."""
     try:
         import gspread
         from oauth2client.service_account import ServiceAccountCredentials
@@ -96,7 +115,8 @@ def sheet_rules():
                 rule = fees.rule_for_category_id(cell(r, "Category ID")) or fees.rule_for_category_path(cell(r, "Category"))
                 out.setdefault(sku.lstrip("0") or sku, (ws.title, cell(r, "Category ID"),
                                                          rule.name if rule else "", rule.lower_pct if rule else None,
-                                                         rule.upper_pct if rule else None, rule.threshold if rule else None))
+                                                         rule.upper_pct if rule else None, rule.threshold if rule else None,
+                                                         cell(r, "OnBuy Category Path") or cell(r, "Category"), cell(r, "Fee %")))
         return out
     except Exception as exc:  # noqa: BLE001 - the money lines are still useful without the tiers
         print(f"(sheet/tier lookup unavailable: {str(exc)[:120]})")
@@ -141,11 +161,21 @@ def main():
             if t and (oldest is None or t < oldest):
                 oldest = t
             prods = [d for d in walk(o) if d.get("sku") is not None and ("name" in d or "quantity" in d or "unit_price" in d)]
+            by_sku = {}
+            for d in prods:        # OnBuy repeats the product dict inside the order payload: one line per SKU, the fullest dict wins
+                key = str(d.get("sku")).strip()
+                if key not in by_sku or len(d) > len(by_sku[key]):
+                    by_sku[key] = d
+            prods = list(by_sku.values())
             skus = [str(d.get("sku")).strip() for d in prods]
             if WANT and not any((s.lstrip("0") or s) in WANT for s in skus):
                 continue
             if not WANT and len(prods) != 1:
                 continue
+            if KEYS and not lines:
+                print(f"KEY PATHS of order {o.get('order_id')} ({len(prods)} line(s)):")
+                for kp in key_paths(o):
+                    print("   " + kp[:160])
             top = money_fields(o)
             for d in prods:
                 sku = str(d.get("sku")).strip()
@@ -162,6 +192,9 @@ def main():
         time.sleep(1.0)
 
     ratios = {}
+    charged = {}
+    mismatches = []
+    extra_fee = 0.0
     for ln in lines:
         top, row = ln["order_money"], ln["line"]
         sub = top.get("price_subtotal")
@@ -179,9 +212,18 @@ def main():
               f"subtotal {sub} delivery {top.get('price_delivery')} discount {top.get('price_discount')} total {tot} | "
               f"sales_fee_ex_VAT {fee_ex} ({share(fee_ex)}% of subtotal+delivery) sales_fee_inc_VAT {fee_inc} ({share(fee_inc)}%) | "
               f"line {json.dumps(row, sort_keys=True)} | "
-              f"tier {rule[2] if rule else '?'} {rule[3] if rule else ''}{'/' + str(rule[4]) + ' above ' + str(rule[5]) if rule and rule[4] is not None else ''} [{rule[0] if rule else '?'}]")
+              f"tier {rule[2] if rule else '?'} {rule[3] if rule else ''}{'/' + str(rule[4]) + ' above ' + str(rule[5]) if rule and rule[4] is not None else ''} [{rule[0] if rule else '?'}]"
+              + (f" | cat {rule[6][:90]} | sheet Fee % {rule[7]}" if rule else "")
+              + (f"  <-- CHARGED {fee_ex / base * 100:.1f}% ex VAT, sheet tier {rule[3]:g}%"
+                 if rule and rule[3] is not None and rule[4] is None and fee_ex and base and sub and abs(fee_ex / base * 100 - rule[3]) > 0.6 else ""))
         if rule and rule[3] is not None and rule[4] is None and ln["n_lines"] == 1 and fee_ex and base and sub:
-            ratios.setdefault(rule[3], []).append((fee_ex / base * 100, (fee_inc / base * 100) if fee_inc else None, ln["status"]))
+            observed = fee_ex / base * 100
+            ratios.setdefault(rule[3], []).append((observed, (fee_inc / base * 100) if fee_inc else None, ln["status"]))
+            charged.setdefault(rule[3], {}).setdefault(round(observed), []).append(ln["sku"])
+            if abs(observed - rule[3]) > 0.6:
+                mismatches.append((rule[6], rule[3], observed, ln["sku"], ln["order"], base))
+                if ln["status"] not in ("Cancelled by Seller", "Cancelled by Customer", "Refunded") and observed > rule[3]:
+                    extra_fee += (observed - rule[3]) / 100 * base
     if ratios:
         print("SUMMARY - OnBuy's own sales fee as a share of subtotal+delivery, per FLAT tier (nominal -> observed):")
         for nominal, vals in sorted(ratios.items()):
@@ -190,6 +232,16 @@ def main():
             print(f"  nominal {nominal:g}%: {len(vals)} order(s) | ex-VAT median {statistics.median(ex):.2f}% (min {min(ex):.2f}, max {max(ex):.2f}) "
                   f"ratio to nominal {statistics.median(ex) / nominal:.3f}"
                   + (f" | inc-VAT median {statistics.median(inc):.2f}% ratio {statistics.median(inc) / nominal:.3f}" if inc else ""))
+            print("      charged: " + ", ".join(f"{pct}% x{len(skus)}" for pct, skus in sorted(charged.get(nominal, {}).items())))
+    if mismatches:
+        print(f"MISMATCHES: {len(mismatches)} single-line order(s) where OnBuy charged a different flat rate than the sheet's category tier | "
+              f"extra commission paid on the kept orders: GBP {extra_fee:.2f} ex VAT (x1.2 inc VAT = GBP {extra_fee * 1.2:.2f})")
+        by_path = {}
+        for path, nominal, observed, sku, order, base in mismatches:
+            by_path.setdefault((path, nominal), []).append((round(observed), sku))
+        for (path, nominal), items in sorted(by_path.items(), key=lambda kv: -len(kv[1])):
+            rates = sorted({r for r, _ in items})
+            print(f"   {len(items):3d} order(s) | sheet tier {nominal:g}% | charged {rates} | {path[:100]} | e.g. {', '.join(sorted({s for _, s in items})[:4])}")
     print(f"DONE: scanned {seen} order(s), {len(lines)} line(s) listed, oldest {oldest}")
 
 

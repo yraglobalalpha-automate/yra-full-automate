@@ -1,0 +1,36 @@
+name: Category Keyword Census (read-only)
+
+# Which rows match a title keyword (default: 3D printing products) and how many priced rows sit on each commission tier.
+# Reads the sheet only; prints no cost cell; writes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      keywords:
+        description: "Title regex, case-insensitive (empty = 3D printing products)"
+        required: false
+        default: ""
+      show:
+        description: "Max keyword rows to print"
+        required: false
+        default: "400"
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Census
+        env:
+          KEYWORDS: ${{ inputs.keywords }}
+          SHOW: ${{ inputs.show }}
+          SHEET_NAME: YRA_Full_Feed_Master
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: python -u category_keyword_census.py
