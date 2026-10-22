@@ -1,0 +1,54 @@
+name: Set Row Cell (one-off)
+
+on:
+  workflow_dispatch:
+    inputs:
+      row:
+        description: "Sheet row number"
+        required: true
+      column:
+        description: "Column header, e.g. Category or Brand"
+        required: true
+      value:
+        description: "The corrected value"
+        required: true
+      expect_sku:
+        description: "Safety: the SKU that row must hold - aborts if it differs"
+        required: false
+        default: ""
+      tab:
+        description: "Worksheet name (blank = the first tab; Amazon = the Amazon tab)"
+        required: false
+        default: ""
+      dry_run:
+        description: "yes = show the change without writing"
+        required: false
+        default: "yes"
+
+# Writes to the sheet the sync also writes to - queue behind it rather than
+# racing its read/modify/write cycle (see run.yml).
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Set cell
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SHEET_TAB: ${{ inputs.tab }}
+          ROW: ${{ inputs.row }}
+          COLUMN: ${{ inputs.column }}
+          VALUE: ${{ inputs.value }}
+          EXPECT_SKU: ${{ inputs.expect_sku }}
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+        run: python set_row_cell.py
