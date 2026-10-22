@@ -27,10 +27,12 @@ from retry_utils import with_retry  # noqa: E402
 APPLY = (os.getenv("APPLY") or "").strip().lower() in ("1", "yes", "true")
 SHEET_NAME = os.getenv("SHEET_NAME") or "__SHEET__"
 ONLY_FROM = re.compile(os.getenv("ONLY_FROM"), re.I) if (os.getenv("ONLY_FROM") or "").strip() else None
+# Machines first, but "3D Printer Filament / Pen / Dryer / Enclosure ..." is the consumable or accessory, not the machine (lookahead);
+# a printer whose title merely mentions the filament it ships with stays a printer. Then pens, then filament.
 DEFAULT_RULES = """
-filament => Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printer Filament
+(3d[ -]?print(er|ing)s?|resin printers?)(?!\s*[-:,]?\s*(filaments?|pens?|dryers?|enclosures?|nozzles?|accessor|parts?|kits?|beds?|plates?|resin\b)) => Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printers
 3d[ -]?(printing[ -]?)?pens? => Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printing Pens
-3d[ -]?print(er|ing)|resin printer => Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printers
+filament => Arts, Crafts & Sewing > Other Crafts > 3D Printing > 3D Printer Filament
 """
 BACKUP_HEADER = ["SKU", "Tab", "Row", "Old Category", "Old Category ID", "New Category", "New Category ID", "Written at (UTC)"]
 
