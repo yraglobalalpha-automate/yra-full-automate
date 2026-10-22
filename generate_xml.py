@@ -943,8 +943,10 @@ def _stem(word):
 def category_match_tokens(text):
     """Meaningful whole-word tokens for category matching: 3+ characters,
     not a stopword, not a bare number, plural-normalized."""
+    # "3d" is kept although it is 2 characters: without it "3D Printer" is a plain "printer" and lands in Computing & Gaming >
+    # Printers (7% commission) instead of 3D Printing > 3D Printers (15%, what OnBuy charges) - Makstore orders T6QR55D / T6Q6FJQ.
     return {_stem(w) for w in tokenize(text)
-            if len(w) >= 3 and w not in _CATEGORY_STOPWORDS and not w.isdigit()}
+            if (len(w) >= 3 or w == "3d") and w not in _CATEGORY_STOPWORDS and not w.isdigit()}
 
 
 def clean_category(cat):

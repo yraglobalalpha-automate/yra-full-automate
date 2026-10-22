@@ -1,7 +1,7 @@
 """Category matcher regression suite - every case is a real incident or a
 diagnosed refusal from production (2026-08-03..06). Runs against the real
 category file via the harness replica of generate_xml's nested stages."""
-from _matcher_harness import map_onbuy_category
+from _matcher_harness import map_onbuy_category, category_match_tokens
 
 # Junk-laden description simulating the diagnosed refusals (the words that
 # made "Model Train Replacement Parts" outscore real leaves for earbuds).
@@ -138,3 +138,19 @@ def test_scorer_still_runs_before_fallback():
     # only ever runs after a refusal.
     _, stage = map_onbuy_category("iPhone 15 Phone Case Shockproof Cover", "", "")
     assert stage == "scorer"
+
+
+def test_3d_printer_title_goes_to_3d_printers_not_document_printers():
+    # 2026-10-22: OnBuy charged 15% (Arts, Crafts & Sewing > 3D Printing) on two Makstore 3D printers the matcher had filed under
+    # Computing & Gaming > Printers (Consumer Electronics 7%) because "3D" was dropped as a 2-character token.
+    result, _stage = _result("X-Maker Joy AI Kids 3D Printer for Beginners, Fully Enclosed, Ready to Print, Wi-Fi & App Control")
+    assert result.endswith("> 3D Printing > 3D Printers")
+
+
+def test_3d_printer_filament_title_goes_to_filament_not_printers():
+    result, _stage = _result("Creality Hyper PLA 3D Printer Filament 1.75mm 1kg High Speed Printing")
+    assert result.endswith("> 3D Printing > 3D Printer Filament")
+
+
+def test_3d_is_a_category_token():
+    assert "3d" in category_match_tokens("3D Printers")
