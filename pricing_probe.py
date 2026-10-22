@@ -22,6 +22,7 @@ import fees  # noqa: E402
 import pricing  # noqa: E402
 import sheet_tabs  # noqa: E402
 import supabase_db  # noqa: E402
+from retry_utils import with_retry  # noqa: E402
 from generate_xml import _pct_value, _shipping_value, _to_float, decide_price  # noqa: E402
 
 SHEET_NAME = os.getenv("SHEET_NAME") or "YRA_Full_Feed_Master"
@@ -103,7 +104,7 @@ def main():
     book = gspread.authorize(creds).open(SHEET_NAME)
     ws = book.worksheet(TAB) if TAB else sheet_tabs.product_sheet(book)
     amazon = ws.title == sheet_tabs.AMAZON_TAB
-    values = ws.get_all_values()
+    values = with_retry(lambda: ws.get_all_values(), what="sheet read", max_attempts=3)   # Google 503s are transient (2026-10-22)
     header = [str(h).strip() for h in values[0]]
     ix = {h: i for i, h in enumerate(header) if h}
     print(f"tab {ws.title!r} ({'Amazon' if amazon else 'eBay'} pricing) | top band profit now {pricing.TOP_BAND_PROFIT:g}% "
