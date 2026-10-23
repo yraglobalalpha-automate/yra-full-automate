@@ -29,6 +29,7 @@ jobs:
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
           FEE_MODE: ${{ vars.FEE_MODE }}
+          PROFIT_SCHEDULE: ${{ vars.PROFIT_SCHEDULE }}
           FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
           SAMPLE: ${{ inputs.sample }}
         run: python shipping_probe.py

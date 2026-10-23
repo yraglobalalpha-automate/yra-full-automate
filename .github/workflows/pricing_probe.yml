@@ -6,6 +6,10 @@ name: Pricing Probe (read-only)
 on:
   workflow_dispatch:
     inputs:
+      schedule_json:
+        description: "Preview / run with this PROFIT_SCHEDULE JSON instead of the store's setting (empty = the setting, else the code)"
+        required: false
+        default: ""
       tab:
         description: "Worksheet (empty = first product tab)"
         required: false
@@ -39,6 +43,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           FEE_MODE: ${{ vars.FEE_MODE }}
+          PROFIT_SCHEDULE: ${{ inputs.schedule_json || vars.PROFIT_SCHEDULE }}
           FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
           SHEET_TAB: ${{ inputs.tab }}
           ROWS: ${{ inputs.rows }}

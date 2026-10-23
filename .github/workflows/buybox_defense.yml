@@ -56,5 +56,6 @@ jobs:
           UNDERCUT_PENCE: ${{ inputs.undercut_pence || '1' }}
           CHECK_BATCH: ${{ inputs.check_batch || '100' }}
           FEE_MODE: ${{ vars.FEE_MODE }}
+          PROFIT_SCHEDULE: ${{ vars.PROFIT_SCHEDULE }}
           FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
         run: python buybox_defense.py

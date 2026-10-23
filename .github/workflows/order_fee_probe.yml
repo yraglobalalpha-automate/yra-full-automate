@@ -53,6 +53,7 @@ jobs:
           KEYS: ${{ inputs.keys }}
           SHEET_NAME: YRA_Full_Feed_Master
           FEE_MODE: ${{ vars.FEE_MODE }}
+          PROFIT_SCHEDULE: ${{ vars.PROFIT_SCHEDULE }}
           FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}

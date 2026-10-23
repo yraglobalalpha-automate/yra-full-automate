@@ -1,0 +1,56 @@
+name: Even Margins (dry run / apply)
+
+# One-off (user 2026-10-12: "apply the profit margins evenly on all the product rows"): puts every priced row on the profit schedule - see even_margins.py.
+# DRY RUN by default: prints aggregates and the held outliers, writes nothing. apply=yes first backs the old values up to a "Prices evened <date>" tab, then
+# writes the Selling Price / Profit % / Fee % cells of every row that is off the schedule (a typed Profit % / Fee %, a Buy Box-defended SKU, a frozen listing and an
+# Amazon price raised by hand are never touched; a price 2x the schedule or more is HELD for review). It touches the Sheet only (no OnBuy call, no eBay/Keepa
+# call): run "Audit Price Drift" with fix=yes afterwards to push the new prices onto the live listings.
+
+on:
+  workflow_dispatch:
+    inputs:
+      schedule_json:
+        description: "Preview / run with this PROFIT_SCHEDULE JSON instead of the store's setting (empty = the setting, else the code)"
+        required: false
+        default: ""
+      apply:
+        description: "yes = write the prices (old values backed up to a sheet tab first); anything else = dry run"
+        required: false
+        default: "no"
+      tabs:
+        description: "Worksheets, comma-separated (empty = the first product tab + Amazon)"
+        required: false
+        default: ""
+      outlier_ratio:
+        description: "A price this many times the schedule or more is held for review instead of lowered"
+        required: false
+        default: "2.0"
+      max_changes:
+        description: "Stop (write nothing) when more prices than this would change"
+        required: false
+        default: "800"
+
+jobs:
+  even:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Even the margins
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FEE_MODE: ${{ vars.FEE_MODE }}
+          PROFIT_SCHEDULE: ${{ inputs.schedule_json || vars.PROFIT_SCHEDULE }}
+          FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
+          APPLY: ${{ inputs.apply }}
+          TABS: ${{ inputs.tabs }}
+          OUTLIER_RATIO: ${{ inputs.outlier_ratio }}
+          MAX_CHANGES: ${{ inputs.max_changes }}
+        run: python even_margins.py

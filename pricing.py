@@ -36,6 +36,7 @@ the automation set under a SUPERSEDED schedule follows the formula down
 (see _SUPERSEDED_PROFIT_BANDS).
 """
 
+import json
 import os
 
 # What OnBuy actually deducts runs ABOVE the tier's nominal rate: it charges
@@ -118,6 +119,101 @@ _SUPERSEDED_PROFIT_BANDS = (
     # same day by the full range rewrite
     ((5.0, 80), (10.0, 80), (30.0, 40), (100.0, 40), (None, 25)),
 )
+
+# ---- the schedule as a setting (dashboard, 2026-10-23) ---------------------------------------------------------------------------
+# PROFIT_SCHEDULE - a repository variable the pricing workflows pass through, or a workflow input for a preview run - replaces the
+# schedule constants above without a code change, so the dashboard can change the bands:
+#   {"bands": [[5, 20], [10, 20], [30, 20], [null, 20]],            (upper cost bound inclusive, null = no bound, profit %)
+#    "sell_price_overrides": [[10, 20, 15]],                        (base-schedule selling price low, high, profit %; optional,
+#                                                                    only a store with the window mechanism uses it)
+#    "superseded": [[[5, 100], [10, 80], [50, 40], [null, 20]]]}    (outgoing schedules, oldest first; optional)
+# Every schedule the setting replaces must be listed under "superseded" (the dashboard does that), so prices and Profit % cells the
+# automation wrote under it stay its own and follow the formula; the code's own schedule is added automatically. Unset, empty or
+# malformed = the constants, never a broken run.
+def _schedule_setting(raw=None):
+    """Parse PROFIT_SCHEDULE (or `raw`) -> {"bands", "superseded", "overrides"} or None when unset / malformed."""
+    raw = (os.getenv("PROFIT_SCHEDULE") if raw is None else raw) or ""
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    def bands_of(items):
+        out = []
+        for item in items or []:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                return None
+            bound, profit = item
+            try:
+                bound = None if bound is None else float(bound)
+                profit = float(profit)
+            except (TypeError, ValueError):
+                return None
+            if (bound is not None and bound <= 0) or not 0 <= profit <= 1000:
+                return None
+            out.append((bound, profit))
+        if not out or out[-1][0] is not None or any(b is None for b, _ in out[:-1]):
+            return None
+        if any(out[i][0] >= out[i + 1][0] for i in range(len(out) - 2)):
+            return None
+        return tuple(out)
+
+    bands = bands_of(data.get("bands"))
+    if not bands:
+        return None
+    superseded = []
+    for old in data.get("superseded") or []:
+        old_bands = bands_of(old)
+        if old_bands:
+            superseded.append(old_bands)
+    overrides = None
+    if "sell_price_overrides" in data:
+        overrides = []
+        for item in data.get("sell_price_overrides") or []:
+            if not isinstance(item, (list, tuple)) or len(item) != 3:
+                return None
+            try:
+                lo, hi, pct = (float(x) for x in item)
+            except (TypeError, ValueError):
+                return None
+            if lo < 0 or hi < lo or not 0 <= pct <= 1000:
+                return None
+            overrides.append((lo, hi, pct))
+        overrides = tuple(overrides)
+    return {"bands": bands, "superseded": tuple(superseded), "overrides": overrides}
+
+
+_CODE_PROFIT_BANDS = PROFIT_BANDS
+_CODE_SUPERSEDED_PROFIT_BANDS = tuple(_SUPERSEDED_PROFIT_BANDS)
+_CODE_SELL_PRICE_OVERRIDES = globals().get("SELL_PRICE_OVERRIDES")
+
+
+def _apply_schedule_setting(setting):
+    """Install a parsed setting (None = back to the code constants); returns what is installed."""
+    global PROFIT_BANDS, _SUPERSEDED_PROFIT_BANDS, SELL_PRICE_OVERRIDES
+    PROFIT_BANDS = _CODE_PROFIT_BANDS
+    _SUPERSEDED_PROFIT_BANDS = _CODE_SUPERSEDED_PROFIT_BANDS
+    if _CODE_SELL_PRICE_OVERRIDES is not None:
+        SELL_PRICE_OVERRIDES = _CODE_SELL_PRICE_OVERRIDES
+    if not setting:
+        return None
+    PROFIT_BANDS = setting["bands"]
+    extra = tuple(b for b in setting["superseded"] if b not in _CODE_SUPERSEDED_PROFIT_BANDS)
+    if _CODE_PROFIT_BANDS != PROFIT_BANDS and _CODE_PROFIT_BANDS not in extra and _CODE_PROFIT_BANDS not in _CODE_SUPERSEDED_PROFIT_BANDS:
+        extra = extra + (_CODE_PROFIT_BANDS,)
+    _SUPERSEDED_PROFIT_BANDS = _CODE_SUPERSEDED_PROFIT_BANDS + extra
+    if setting["overrides"] is not None and _CODE_SELL_PRICE_OVERRIDES is not None:
+        SELL_PRICE_OVERRIDES = setting["overrides"]
+    return setting
+
+
+_SCHEDULE_SETTING = _apply_schedule_setting(_schedule_setting())
+
 
 
 def legacy_profit_percents(total_cost):

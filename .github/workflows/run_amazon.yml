@@ -81,6 +81,7 @@ jobs:
           RUNS_PER_DAY: ${{ vars.RUNS_PER_DAY || '12' }}
           EBAY_DAILY_CALL_BUDGET: ${{ vars.EBAY_DAILY_CALL_BUDGET }}
           FEE_MODE: ${{ vars.FEE_MODE }}
+          PROFIT_SCHEDULE: ${{ vars.PROFIT_SCHEDULE }}
           FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
           # eBay's delivery fee in the cost base and the Shipping Cost (£) cell (user 2026-10-02): '1' = on, 'shadow' =
           # measure and log only (nothing written or repriced), '0' = off. A repo variable of the same name overrides.
