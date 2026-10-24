@@ -39,6 +39,10 @@ DEFAULT_STOCK = int(os.getenv("AMAZON_DEFAULT_STOCK") or "5")
 # it. Off by default - Amazon's own price plus the lowest New offer cover
 # most rows for the base 1 token.
 USE_BUYBOX = (os.getenv("KEEPA_BUYBOX") or "").strip().lower() in ("1", "yes", "true")
+# 2026-10-24 (Arden 0000049897678-Messam: three orders for a product Amazon itself no longer sold - Keepa still listed a third-party
+# "lowest New" offer and this module accepted it as a source). AMAZON_OWN_OFFER_ONLY=1: only Amazon's own in-stock offer counts
+# (and, with KEEPA_BUYBOX, a Buy Box held by Amazon); a product left to third-party sellers reads as out of stock. Off = the old rule.
+OWN_OFFER_ONLY = (os.getenv("AMAZON_OWN_OFFER_ONLY") or "").strip().lower() in ("1", "yes", "true")
 MAX_WAIT_FOR_TOKENS = int(os.getenv("KEEPA_MAX_WAIT_SECONDS") or "600")
 # Keepa's "update" parameter: refresh the product from Amazon if its copy is
 # older than this many hours. The documented default (1) still handed the
@@ -135,7 +139,7 @@ def _price(current, idx):
     return value if value > 0 else -1
 
 
-def choose_offer(product, use_buybox=None):
+def choose_offer(product, use_buybox=None, own_only=None):
     """(price_pence, seller, availability_text, reason) for the offer we would
     actually buy from; price -1 when nothing is buyable right now.
 
@@ -146,6 +150,7 @@ def choose_offer(product, use_buybox=None):
     the costlier mistake, the same rule the eBay fetch applies.
     """
     use_buybox = USE_BUYBOX if use_buybox is None else use_buybox
+    own_only = OWN_OFFER_ONLY if own_only is None else own_only
     ptype = product.get("productType")
     if ptype == 4:
         return -1, "", "Invalid or removed ASIN", "dead"
@@ -168,13 +173,19 @@ def choose_offer(product, use_buybox=None):
                  and not stats.get("buyBoxIsBackorder")
                  and not stats.get("buyBoxIsUnqualified")
                  and stats.get("buyBoxAvailabilityMessage") in (None, "IN_STOCK"))
-        if bb_ok:
+        if bb_ok and (not own_only or stats.get("buyBoxIsAmazon")):
             ship = stats.get("buyBoxShipping")
             price = bb_price + (ship if isinstance(ship, int) and ship > 0 else 0)
             seller = "Amazon" if stats.get("buyBoxIsAmazon") else "3rd party (Buy Box)"
             return price, seller, "In stock (Buy Box)", "buybox"
+    else:
+        bb_ok = False
 
     new_price = _price(current, IDX_NEW)
+    if own_only:
+        if new_price > 0 or bb_ok:
+            return -1, "", "Third-party sellers only (no Amazon offer)", "third-party-only"
+        return -1, "", AVAILABILITY_TEXT.get(avail, "Unknown"), "unavailable"
     if new_price > 0:
         return new_price, "3rd party (lowest New)", "In stock (3rd party)", "new"
     return -1, "", AVAILABILITY_TEXT.get(avail, "Unknown"), "unavailable"

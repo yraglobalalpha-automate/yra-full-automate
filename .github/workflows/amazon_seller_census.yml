@@ -1,0 +1,29 @@
+name: Amazon Seller Census (read-only)
+
+# What the AMAZON_OWN_OFFER_ONLY rule would do here: the Amazon-sourced rows by the seller Keepa last reported and by stock, with sample
+# SKUs of the rows that are live on a third-party offer only. Reads the sheet; no Keepa, no OnBuy, no writes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: "How many example SKUs to print per seller kind"
+        required: false
+        default: "15"
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Census
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SAMPLE: ${{ inputs.sample }}
+        run: python amazon_seller_census.py
