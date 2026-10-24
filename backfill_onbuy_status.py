@@ -47,6 +47,10 @@ PAGE_SIZE = 50
 EXTRA_TABS = [t.strip() for t in (os.getenv("BACKFILL_EXTRA_TABS") or "Amazon").split(",") if t.strip()]
 IMPORT_OPC = (os.getenv("BACKFILL_IMPORT_OPC") or "1").strip().lower() not in ("0", "no", "false")
 IMPORT_MAX_PAGES = int(os.getenv("BACKFILL_IMPORT_MAX_PAGES") or "120")
+# 2026-10-24: a row the sync marked Synced can still have a blank OPC cell (GTV: 9 rows on 10-22, 52 on 10-24 - the OPC is on OnBuy, it
+# just never reached the sheet). The backfill fills it from the listings sweep. BACKFILL_FILL_OPC=0 disables; _MAX caps a run.
+FILL_OPC = (os.getenv("BACKFILL_FILL_OPC") or "1").strip().lower() not in ("0", "no", "false")
+FILL_OPC_MAX = int(os.getenv("BACKFILL_FILL_OPC_MAX") or "500")
 
 POISONED_TEXT = "Failed: rejected with no reason given by OnBuy"
 
@@ -199,6 +203,70 @@ def _import_candidates(data):
         if not sku and url and opc and opc != "PENDING":
             out.append((idx, opc))
     return out
+
+
+def _blank_opc_candidates(data):
+    """[(data index, SKU)] for rows the sync has already marked Synced whose OPC cell is still blank (or the backfill's own PENDING
+    marker): OnBuy holds the OPC, the sheet never got it (2026-10-22: 9 GTV rows; 2026-10-24: 52)."""
+    out = []
+    for idx, row in enumerate(data):
+        sku = str(row.get("SKU") or "").replace(",", "").strip()
+        opc = str(row.get("OPC") or "").strip().upper()
+        status = str(row.get("Sync Status") or "").strip()
+        if sku and opc in ("", "PENDING") and status.startswith("Synced"):
+            out.append((idx, sku))
+    return out
+
+
+def plan_opc_fills(tab, sku_to_opc, limit=None):
+    """Cell writes (the OPC cell only) for the tab's blank-OPC Synced rows whose SKU has exactly one OPC among this account's listings;
+    a row OnBuy does not list keeps its blank cell (nothing to invent). Pure: the caller re-anchors and flushes."""
+    col_map = tab["col_map"]
+    if "OPC" not in col_map:
+        return [], 0, 0
+    updates, filled, unknown = [], 0, 0
+    for idx, sku in _blank_opc_candidates(tab["data"]):
+        opc = sku_to_opc.get(sku)
+        if not opc:
+            unknown += 1
+            continue
+        if limit is not None and filled >= limit:
+            break
+        updates.append({"range": f"{col_letter(col_map['OPC'])}{idx + 2}", "values": [[opc]]})
+        filled += 1
+    return updates, filled, unknown
+
+
+def fill_blank_opcs(tabs, onbuy, opc_to_sku=None):
+    """Write the OPC OnBuy holds onto every Synced row whose OPC cell is blank. One listings sweep (or the map handed in); the writes
+    ride the SKU-anchored remap like every other backfill write. Returns the sweep map, None when the sweep failed."""
+    if not any(_blank_opc_candidates(tab["data"]) for tab in tabs):
+        return opc_to_sku
+    if opc_to_sku is None:
+        try:
+            opc_to_sku = fetch_opc_sku_map(onbuy)
+        except Exception as exc:  # noqa: BLE001 - a half-built map must not drive writes
+            print(f"[opc-fill] listings sweep failed ({str(exc)[:200]}) - blank OPCs retried next hourly run")
+            return None
+    sku_to_opc, dup = {}, set()
+    for opc, sku in opc_to_sku.items():
+        if sku in sku_to_opc and sku_to_opc[sku] != opc:
+            dup.add(sku)
+        sku_to_opc.setdefault(sku, opc)
+    for sku in dup:
+        sku_to_opc.pop(sku, None)        # one SKU on several products: a person decides, not this pass
+    budget = FILL_OPC_MAX
+    for tab in tabs:
+        updates, filled, unknown = plan_opc_fills(tab, sku_to_opc, limit=budget)
+        budget -= filled
+        if updates:
+            updates = remap_row_writes(tab, updates, "opc-fill writes")
+        if updates:
+            tab["sheet"].batch_update(updates)
+        if filled or unknown:
+            print(f"[opc-fill] {tab['sheet'].title}: {len(updates)} blank OPC(s) filled from the listings, {unknown} row(s) OnBuy does not list"
+                  + (f", {len(dup)} SKU(s) on several products skipped" if dup else ""))
+    return opc_to_sku
 
 
 def fetch_opc_sku_map(onbuy):
@@ -365,8 +433,9 @@ def main():
         print(f"[{sheet.title}] {len(pending)} pending SKU(s)")
 
     has_imports = IMPORT_OPC and any(_import_candidates(tab["data"]) for tab in tabs)
-    if not all_pending and not has_imports:
-        print("No rows needing a queue-status check and no OPC-seeded rows - nothing to do.")
+    has_fills = FILL_OPC and any(_blank_opc_candidates(tab["data"]) for tab in tabs)
+    if not all_pending and not has_imports and not has_fills:
+        print("No rows needing a queue-status check, no OPC-seeded rows and no blank OPC on a Synced row - nothing to do.")
         _reconcile_deletions(book)
         return
 
@@ -378,6 +447,8 @@ def main():
 
     if has_imports:
         import_opc_rows(tabs, onbuy)
+    if has_fills:
+        fill_blank_opcs(tabs, onbuy)
 
     if not all_pending:
         print("No rows needing a queue-status check found - done.")
