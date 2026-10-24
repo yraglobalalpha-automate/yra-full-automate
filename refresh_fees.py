@@ -25,9 +25,13 @@ CATEGORY_TIERS_CSV = os.path.join(_DIR, "onbuy_category_tiers.csv")
 CATEGORIES_CSV = os.path.join(_DIR, "onbuy_categories_only.csv")
 
 
-def page_all(onbuy, path, limit=100, max_pages=80):
+def page_all(onbuy, path, limit=100, max_pages=300):
+    """Every record of a paged GET. max_pages was 80 (8,000 records) until 2026-10-24: the category table committed on 2026-09-09 stopped
+    at exactly 8,000 rows because of it. A run that still hits the cap says so, so a truncated table is never committed in silence."""
     out, offset = [], 0
-    for _ in range(max_pages):
+    for page_no in range(max_pages):
+        if page_no == max_pages - 1:
+            print(f"WARNING: {path}: {max_pages} pages read and more may follow - the table is incomplete, raise max_pages")
         def _page(off=offset):
             r = onbuy._send("GET", f"{BASE_URL}/{path}", what=f"{path} page",
                             params={"site_id": onbuy.site_id, "limit": limit, "offset": off}, timeout=60)

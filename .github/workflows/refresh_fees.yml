@@ -1,12 +1,24 @@
 name: Refresh OnBuy Commission Tables (read-only API)
 
+# GET calls only, but it takes an OnBuy token - queue with the other callers. Fetches OnBuy's commission tiers and every category's tier,
+# compares them with the tables committed in the repository (the syncs price from the committed ones) and, with commit=yes, commits them.
+# A category OnBuy dropped loses its tier: a row still in it prices with the flat rate until it is moved (remap_gone_categories).
+
 on:
   workflow_dispatch:
+    inputs:
+      commit:
+        description: "yes = commit the refreshed tables to the repository (anything else = compare only)"
+        required: false
+        default: "no"
 
-# GET calls only, but it takes an OnBuy token - queue with the other callers.
 concurrency:
   group: onbuy-api
   cancel-in-progress: false
+
+permissions:
+  contents: write      # commit=yes commits onbuy_commission_tiers.csv + onbuy_category_tiers.csv
+  actions: read
 
 jobs:
   refresh:
@@ -29,6 +41,30 @@ jobs:
           ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
           ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
         run: python refresh_fees.py
+      - name: Compare with the committed tables
+        run: python compare_fee_tables.py
+      - name: Commit the refreshed tables
+        if: ${{ inputs.commit == 'yes' }}
+        run: |
+          if git diff --quiet -- onbuy_commission_tiers.csv onbuy_category_tiers.csv; then
+            echo "nothing to commit - the committed tables already match OnBuy"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -- onbuy_commission_tiers.csv onbuy_category_tiers.csv
+            git commit -m "OnBuy commission tables from the API (refresh_fees run ${{ github.run_id }})"
+            pushed=0
+            for i in 1 2 3 4; do
+              if git pull --rebase --autostash origin main && git push origin HEAD:main; then pushed=1; break; fi
+              sleep 6
+            done
+            if [ "$pushed" = "1" ]; then
+              echo "TABLES COMMITTED: $(git rev-parse --short HEAD)"
+            else
+              echo "TABLES NOT PUSHED: the commit could not be pushed - run again"
+              exit 1
+            fi
+          fi
       - name: Upload commission tables
         uses: actions/upload-artifact@v4
         with:
