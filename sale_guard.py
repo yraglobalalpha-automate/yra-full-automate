@@ -46,6 +46,19 @@ SKU_FILE = (os.getenv("SKU_FILE") or "").strip()
 SWEEP_FILE = (os.getenv("SWEEP_FILE") or "").strip()
 BLIND_SALE_PRICE = (os.getenv("BLIND_SALE_PRICE") or "0.01").strip()
 PAUSE = 2.0
+STATE_FILE = (os.getenv("STORE_SALE_STATE") or "store_sale.json").strip()      # written by store_sale.py apply (the user's one-click store sale)
+
+
+def store_sale_state(path=STATE_FILE, today=None):
+    """The active one-click store sale (store_sale.json: percent or price ranges, window) or None when there is none or its last day has passed."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    end = str((state or {}).get("sale_end_date") or "")[:10]
+    today = today or time.strftime("%Y-%m-%d", time.gmtime())
+    return state if end >= today else None
 
 # The window that ends a sale: a fixed past one (this exact spelling was accepted and cleared by OnBuy on 2026-10-10).
 PAST_START = "2026-09-01 00:00:00"
@@ -271,6 +284,12 @@ def main():
         print(f"sale guard: sweep dump written to {DUMP}", flush=True)
     on_sale = [r for r in listings if listing_sweep.has_sale(r)]
     print(f"sale guard: {len(on_sale)} of {len(listings)} listings carry a sale price", flush=True)
+    state = store_sale_state()
+    if state:
+        what = state.get("summary") or f"{state.get('percent')}% off"
+        print(f"sale guard: STORE SALE ACTIVE - {what} until {str(state.get('sale_end_date'))[:10]} (store_sale.json, the user's "
+              f"one-click sale): sales are expected, the guard ends nothing this run", flush=True)
+        return
     for line in describe(on_sale) if on_sale else []:
         print("sale guard: " + line, flush=True)
     if not on_sale:

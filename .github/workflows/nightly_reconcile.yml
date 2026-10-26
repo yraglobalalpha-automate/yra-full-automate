@@ -212,3 +212,24 @@ jobs:
           SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
         run: python -u sale_guard.py
+
+      # User 2026-10-15 / 2026-10-26: while a one-click store sale is on (store_sale.json), listings created since and listings whose price changed get the sale
+      # recomputed under the sale's own rules (percentage or price ranges, margin floor), and a listing that moved out of its rules loses it. Nothing happens when no
+      # sale is on. Shared sweep, no extra reads.
+      - name: Store sale refresh (keep the one-click sale on every listing while it is on)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          MODE: refresh
+          LISTINGS_CACHE: "listings_cache.json"
+          SHEET_NAME: ${{ vars.SHEET_NAME || 'YRA_Full_Feed_Master' }}
+          SEMI_SHEET_NAME: ${{ vars.SEMI_SHEET_NAME || '' }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: python -u store_sale.py

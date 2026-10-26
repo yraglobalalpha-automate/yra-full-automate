@@ -1,0 +1,127 @@
+name: Store Sale (one click on / off)
+
+# User 2026-10-15: "a one click feature ... apply a sale percentage instantly to the whole store and cancel it instantly too" - the dashboard starts a sale
+# at once but takes 1-2 days to end one; through the API both take about a minute (canary 2026-10-15: on after 15 s, off after 60 s). mode=plan
+# (default) only shows what would happen; mode=apply puts PERCENT off on every listing above its MARGIN FLOOR (window until sale_end) and records
+# store_sale.json so the nightly guard leaves the sale alone and the nightly refresh keeps new / re-priced listings on it; mode=cancel ends every sale
+# on the account and removes store_sale.json; mode=test tries ONE listing (on, then off, with the timeline). The margin floor (user 2026-10-15): a sale
+# price never leaves less than min_profit % profit on cost + shipping after OnBuy's fee (the stores' own price formula); a listing under its floor is
+# left out (skip) or put on sale at the floor (cap); a listing with no cost on the sheets is left out. See store_sale.py. The state file is committed
+# by this workflow (github-actions[bot]).
+# GTV (user 2026-10-26: "Apply 3% sale on all GTV products except the 10-20 gbp range products"): exclude_price_from / exclude_price_to keep every listing
+# priced in that range (both ends included) out of the sale; the range is stored in store_sale.json for the nightly refresh (inside the backfill).
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan | test | apply | cancel | refresh"
+        required: false
+        default: "plan"
+      percent:
+        description: "Sale percentage off the listing price (1-90), e.g. 10"
+        required: false
+        default: ""
+      sale_end:
+        description: "Last day of the sale, YYYY-MM-DD (blank = 30 days from today)"
+        required: false
+        default: ""
+      min_profit:
+        description: "Margin floor: the profit % on cost + shipping (after OnBuy's fee) a sale price must still leave; 'off' = no floor (not advised)"
+        required: false
+        default: "10"
+      floor_mode:
+        description: "skip = a listing under its floor stays out of the sale | cap = it goes on sale at the floor instead"
+        required: false
+        default: "skip"
+      scope:
+        description: "all = every priced listing | in_stock = only listings with stock"
+        required: false
+        default: "all"
+      price_ranges:
+        description: "Sale % per price range, e.g. 0-9.99:5; 20-:3 (GBP, both ends included, first match wins, 0 = keep that range out, empty bound = open). Empty = percent for every listing"
+        required: false
+        default: ""
+      exclude_price_from:
+        description: "Keep listings priced from this amount (GBP, both ends included) out of the sale, e.g. 10; blank = no exclusion"
+        required: false
+        default: ""
+      exclude_price_to:
+        description: "... up to this amount (GBP, included), e.g. 20"
+        required: false
+        default: ""
+      test_sku:
+        description: "mode=test: the one SKU to try"
+        required: false
+        default: ""
+      max_changes:
+        description: "Refuse when more listings than this would change (0 = no cap)"
+        required: false
+        default: "0"
+
+permissions:
+  contents: write      # apply / cancel commit store_sale.json (the state the nightly guard and refresh read)
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  sale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Store sale
+        env:
+          MODE: ${{ inputs.mode }}
+          PERCENT: ${{ inputs.percent }}
+          SALE_END: ${{ inputs.sale_end }}
+          MIN_PROFIT_PERCENT: ${{ inputs.min_profit }}
+          FLOOR_MODE: ${{ inputs.floor_mode }}
+          SCOPE: ${{ inputs.scope }}
+          PRICE_RANGES: ${{ inputs.price_ranges }}
+          EXCLUDE_PRICE_FROM: ${{ inputs.exclude_price_from }}
+          EXCLUDE_PRICE_TO: ${{ inputs.exclude_price_to }}
+          TEST_SKU: ${{ inputs.test_sku }}
+          MAX_CHANGES: ${{ inputs.max_changes }}
+          SHEET_NAME: ${{ vars.SHEET_NAME || 'YRA_Full_Feed_Master' }}
+          SEMI_SHEET_NAME: ${{ vars.SEMI_SHEET_NAME || '' }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: python -u store_sale.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: store-sale-plan
+          path: store_sale_plan.csv
+          if-no-files-found: ignore
+      - name: Record the sale state (store_sale.json on = sale running, gone = no sale)
+        if: ${{ !cancelled() && (inputs.mode == 'apply' || inputs.mode == 'cancel') }}
+        run: |
+          if [ -n "$(git status --porcelain -- store_sale.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            desc="cancelled"
+            if [ -f store_sale.json ]; then desc=$(python -c "import json; d = json.load(open('store_sale.json')); print((d.get('summary') or '') + ' until ' + str(d.get('sale_end_date'))[:10])"); fi
+            git add -A -- store_sale.json
+            git commit -m "store sale: ${{ inputs.mode }} - ${desc}"
+            for i in 1 2 3 4; do
+              git pull --rebase --autostash origin main && git push origin HEAD:main && break
+              sleep 6
+            done
+          else
+            echo "sale state unchanged"
+          fi
