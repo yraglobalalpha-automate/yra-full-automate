@@ -1,6 +1,6 @@
 name: Duplicate Removal (sheet rows + OnBuy listings)
 
-# Removes LIVE DUPLICATES: a later row for a supplier product that an earlier row (the keeper - the same "first row
+# Removes LIVE DUPLICATES (and, with oos_list_file, an explicit SKU list - the 2026-10-08 "delete these like YRA" campaign): a later row for a supplier product that an earlier row (the keeper - the same "first row
 # wins" rule the sync uses) already owns, while the keeper is live AND Synced. One run does both halves so nothing can
 # interleave: the rows go from the product tabs (every row backed up whole to a backup tab first), then the same SKUs'
 # listings are deleted from OnBuy in batches. dry_run=yes (default) only reports and writes the plan
@@ -10,6 +10,14 @@ name: Duplicate Removal (sheet rows + OnBuy listings)
 on:
   workflow_dispatch:
     inputs:
+      oos_list_file:
+        description: "Repo path: an explicit list of SKUs to remove, one per line (rule A: a row goes only while it is out of stock, on exactly one row, not protected / not an open order; SKUs that are not on the sheet have their OnBuy listing deleted too). Empty = duplicates only"
+        required: false
+        default: ""
+      allow_in_stock:
+        description: "yes = the explicit list may also remove rows that show stock (the user's explicit order); protected / open-order SKUs and SKUs on several rows are still held"
+        required: false
+        default: "no"
       remove_live_dups:
         description: "Remove live duplicate rows and their OnBuy listings (yes/no)"
         required: false
@@ -66,6 +74,8 @@ jobs:
       - name: Plan, back up and remove sheet rows
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          OOS_LIST_FILE: ${{ inputs.oos_list_file }}
+          OOS_LIST_ALLOW_IN_STOCK: ${{ inputs.allow_in_stock }}
           DUP_LIST_FILE: ${{ inputs.dup_list_file }}
           REMOVE_LIVE_DUPS: ${{ inputs.remove_live_dups }}
           REMOVE_DEAD_COPIES: ${{ inputs.remove_dead_copies }}
