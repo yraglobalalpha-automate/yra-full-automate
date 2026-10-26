@@ -1,0 +1,81 @@
+name: Delivery Templates (plan / test / apply)
+
+# Every listing on the delivery template of its supplier (the Delivery page of the dashboard drives this): eBay rows on the eBay template, Amazon rows on the Amazon template,
+# AliExpress rows on the AliExpress template; a listing with no sheet row (legacy) stays where it is. plan = census + what would move (writes nothing); test = ONE listing's
+# template through the API and a read-back (proves the field is accepted); apply = every listing off its template, in batches. The template ids are per OnBuy account: empty =
+# the DELIVERY_TEMPLATE_* repository variable, and a supplier with no id moves nothing. See delivery_templates.py.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan | test | apply"
+        required: false
+        default: "plan"
+      template_ebay:
+        description: "Delivery template id for eBay-sourced listings (empty = the DELIVERY_TEMPLATE_EBAY variable; none = eBay listings stay where they are)"
+        required: false
+        default: ""
+      template_amazon:
+        description: "Delivery template id for Amazon-sourced listings (empty = the DELIVERY_TEMPLATE_AMAZON variable; none = Amazon listings stay where they are)"
+        required: false
+        default: ""
+      template_ali:
+        description: "Delivery template id for AliExpress-sourced listings (empty = the DELIVERY_TEMPLATE_ALI variable; none = AliExpress listings stay where they are)"
+        required: false
+        default: ""
+      test_sku:
+        description: "mode=test: the one SKU to move"
+        required: false
+        default: ""
+      max_changes:
+        description: "mode=apply: refuse when more listings than this would move"
+        required: false
+        default: "3000"
+      clear_handling:
+        description: "yes = also take a sheet-sourced listing's OWN handling time off (0 = the template decides); legacy listings untouched"
+        required: false
+        default: "no"
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  templates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Delivery templates
+        env:
+          MODE: ${{ inputs.mode }}
+          TEMPLATE_EBAY: ${{ inputs.template_ebay || vars.DELIVERY_TEMPLATE_EBAY }}
+          TEMPLATE_AMAZON: ${{ inputs.template_amazon || vars.DELIVERY_TEMPLATE_AMAZON }}
+          TEMPLATE_ALI: ${{ inputs.template_ali || vars.DELIVERY_TEMPLATE_ALI }}
+          TEST_SKU: ${{ inputs.test_sku }}
+          MAX_CHANGES: ${{ inputs.max_changes }}
+          CLEAR_HANDLING: ${{ inputs.clear_handling }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+        run: python -u delivery_templates.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: delivery-template-plan
+          path: |
+            delivery_template_plan.csv
+            handling_times.csv
+          if-no-files-found: ignore
