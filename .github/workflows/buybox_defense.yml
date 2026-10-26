@@ -8,9 +8,13 @@ on:
         required: false
         default: "yes"
       undercut_pence:
-        description: "Pence below the Buy Box price to reprice to"
+        description: "Pence below the Buy Box price to reprice to (empty = the BUYBOX_DEFENSE_UNDERCUT_PENCE variable, else 1)"
         required: false
-        default: "1"
+        default: ""
+      profit_percent:
+        description: "Profit % of the SELLING price the price floor keeps after the commission (empty = the BUYBOX_DEFENSE_PROFIT_PERCENT variable, else 15)"
+        required: false
+        default: ""
       check_batch:
         description: "SKUs per check-winning call"
         required: false
@@ -41,7 +45,12 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Switched off
+        if: github.event_name == 'schedule' && vars.BUYBOX_DEFENSE_ENABLED == 'no'
+        run: echo "Buy Box defense is switched off - the repository variable BUYBOX_DEFENSE_ENABLED is no - so the daily run does nothing"
+
       - name: Defend Buy Box
+        if: ${{ !(github.event_name == 'schedule' && vars.BUYBOX_DEFENSE_ENABLED == 'no') }}
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
@@ -53,7 +62,8 @@ jobs:
           ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
           ONBUY_API_PUSH_ENABLED: ${{ vars.ONBUY_API_PUSH_ENABLED }}
           DRY_RUN: ${{ github.event_name == 'schedule' && '0' || (inputs.dry_run == 'no' && '0' || '1') }}
-          UNDERCUT_PENCE: ${{ inputs.undercut_pence || '1' }}
+          UNDERCUT_PENCE: ${{ inputs.undercut_pence || vars.BUYBOX_DEFENSE_UNDERCUT_PENCE || '1' }}
+          DEFENSE_PROFIT_PERCENT: ${{ inputs.profit_percent || vars.BUYBOX_DEFENSE_PROFIT_PERCENT }}
           CHECK_BATCH: ${{ inputs.check_batch || '100' }}
           FEE_MODE: ${{ vars.FEE_MODE }}
           PROFIT_SCHEDULE: ${{ vars.PROFIT_SCHEDULE }}
