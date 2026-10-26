@@ -12,3 +12,4 @@
 # 2026-10-21 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
 # 2026-10-21 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
 # 2026-10-22 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+# 2026-10-26 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
