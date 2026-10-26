@@ -233,10 +233,12 @@ def window(end_date, today=None):
     return f"{(today - timedelta(days=1)).isoformat()} 00:00:00", f"{end} 23:59:59"
 
 
-def carries_this_sale(rec, end):
-    """True when the listing carries a sale that ends on this sale's last day - the one this store sale put there."""
+def carries_this_sale(rec, end, previous_end=None):
+    """True when the listing carries a sale that ends on this sale's last day - or on the last day of the running store sale this one replaces: the ones this
+    store sale put there."""
     rec = rec or {}
-    return listing_sweep.has_sale(rec) and str(rec.get("sale_end_date") or "")[:10] == end[:10]
+    days = {end[:10]} | ({previous_end[:10]} if previous_end else set())
+    return listing_sweep.has_sale(rec) and str(rec.get("sale_end_date") or "")[:10] in days
 
 
 def sale_item(sku, sale, start, end):
@@ -306,13 +308,13 @@ def sheet_costs(client, sheet_name=SHEET_NAME, semi_name=SEMI_SHEET_NAME):
 SALE_ACTIONS = ("sale on", "sale changed", "capped at the floor", "already on this sale")
 
 
-def plan_apply(listings, percent, start, end, scope="all", costs=None, min_profit=None, floor_mode="skip", exclude=None, ranges=None):
+def plan_apply(listings, percent, start, end, scope="all", costs=None, min_profit=None, floor_mode="skip", exclude=None, ranges=None, previous_end=None):
     """-> (items to send, rows for the plan CSV, counters). costs=None or min_profit=None = no floor. With `ranges` ([(low, high, percent), ...]) each listing takes the
     percentage of the first range that contains its price (both ends included): percent 0 keeps it out ("skip: price in the excluded range"), a price outside every range
     gets nothing ("skip: outside the selected price ranges"). Without ranges every listing takes `percent`, except one inside `exclude` = (low, high). A listing without
     a numeric price, with a sale price that would not be below its price, out of stock under scope=in_stock, without a cost (floor on), under its floor (skip) or already
     on exactly this sale sends nothing; floor_mode=cap puts a listing under its floor on sale AT the floor when that still gives >= 1% off. A listing that is kept out
-    but still carries THIS sale (same last day) is sent the ending update. Rows end with the percentage used and the index of the range ("" = none)."""
+    but still carries THIS sale (same last day, or the last day of the running sale this one replaces: previous_end) is sent the ending update. Rows end with the percentage used and the index of the range ("" = none)."""
     items, rows, c = [], [], Counter()
     floor_on = costs is not None and min_profit is not None
     for rec in listings:
@@ -356,7 +358,7 @@ def plan_apply(listings, percent, start, end, scope="all", costs=None, min_profi
                 if action is None:
                     action = "sale on" if not listing_sweep.has_sale(rec) else "sale changed"
                 items.append(sale_item(sku, sale, start, end))
-        elif carries_this_sale(rec, end):
+        elif carries_this_sale(rec, end, previous_end):
             items.append(ending_item(sku, to_float(rec.get("sale_price"))))
             action += " (sale ended)"
         c[action] += 1
@@ -527,6 +529,7 @@ def main():
         floor_mode, scope, exclude = cfg["floor_mode"], cfg["scope"], cfg["exclude"]
     else:
         start, end = window(SALE_END)
+    previous_end = str(state.get("sale_end_date") or "")[:10] if state_active(state) else None      # the running sale's last day: its listings are "ours" too
     rules = describe_rules(percent, ranges, exclude) if (ranges or percent is not None) else "-"
     print(f"MODE {MODE} | sale {rules} | window {start} .. {end} | scope {scope} | margin floor "
           f"{'OFF' if min_profit is None else f'{min_profit}% profit on cost + shipping after the fee, {floor_mode}'} | state: "
@@ -601,7 +604,7 @@ def main():
             write_plan([[r.get("sku"), r.get("price"), r.get("stock"), r.get("sale_price"), "", "", "", "", "on sale now"] for r in on_sale])
             print("PLAN ONLY - nothing changed.")
             return
-        items, rows, c = plan_apply(listings, percent, start, end, scope, costs, min_profit, floor_mode, exclude, ranges)
+        items, rows, c = plan_apply(listings, percent, start, end, scope, costs, min_profit, floor_mode, exclude, ranges, previous_end)
         write_plan(rows)
         n_sale, discount = total_discount(rows)
         print(f"PLAN {rules} | {len(items)} update(s) in {-(-len(items) // CHUNK)} request(s)")

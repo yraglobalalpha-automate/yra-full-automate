@@ -317,6 +317,18 @@ def test_a_refresh_reads_ranges_from_the_state_and_an_old_state_without_them_sti
     assert ss.describe_rules(cfg["percent"], cfg["ranges"], cfg["exclude"]) == "3% off every listing except GBP 10 to GBP 20"
 
 
+def test_a_listing_carrying_the_sale_this_one_replaces_is_ended_when_it_drops_out_of_the_new_rules():
+    old_end = "2026-10-28 23:59:59"                       # the running sale's last day; END (the new sale's) is later
+    listing = [rec("A", "30.00", sale="29.10", end=old_end)]
+    items, rows, _ = ss.plan_apply(listing, 3, START, END, exclude=(25.0, 35.0), previous_end=old_end)
+    assert rows[0][8] == "skip: price in the excluded range (sale ended)" and len(items) == 1 and items[0]["sale_end_date"] == sale_guard.PAST_END
+    items, rows, _ = ss.plan_apply(listing, 3, START, END, exclude=(25.0, 35.0))                  # a sale nobody here knows about is left alone
+    assert rows[0][8] == "skip: price in the excluded range" and items == []
+    items, rows, _ = ss.plan_apply(listing, 3, START, END, previous_end=old_end)                  # still inside the rules: it just takes the new window
+    assert rows[0][8] == "sale changed" and items[0]["sale_end_date"] == END
+    assert ss.carries_this_sale(listing[0], END, old_end) and not ss.carries_this_sale(listing[0], END) and not ss.carries_this_sale(rec("B", "5.00"), END, old_end)
+
+
 def test_the_guard_names_the_sale_from_its_summary(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
 
