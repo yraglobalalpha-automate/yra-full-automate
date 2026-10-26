@@ -105,6 +105,31 @@ def profit_percent(total_cost):
     return _band_lookup(PROFIT_BANDS, total_cost)
 
 
+# Price ranges with their own profit % (2026-10-26, for the dashboard's "Profit % by price range"; GTV's own GBP 10-20 -> 15% policy of 2026-09-26 is this same
+# mechanism, set in its code). A row whose BASE-schedule price lands inside a range sells at that range's profit instead of its cost band's. Anchored on the
+# BASE-schedule price, never on the range's own result, so a borderline item cannot flap between profits from run to run, and computed under the fee model of
+# 2026-09-26 (legacy=True) so the VAT correction of 2026-10-07 cannot push rows across a range edge: which rows sit in a range is a policy choice, not a fee
+# estimate. EMPTY on this store: the dashboard fills it through the PROFIT_SCHEDULE setting (sell_price_overrides); with no range nothing here changes a price.
+SELL_PRICE_OVERRIDES = ()      # ((base price low, high - both inclusive, profit %), ...)
+
+
+def profit_percent_for(total_cost, rule=None):
+    """The row's effective profit percent: the cost band's value, unless
+    the base-schedule price (under the row's fee context) lands inside a
+    price range."""
+    base = profit_percent(total_cost)
+    if total_cost <= 0 or not SELL_PRICE_OVERRIDES:
+        return base
+    if rule is not None:
+        base_price = price_for_profit(total_cost, base, rule=rule, legacy=True)
+    else:
+        base_price = price_for_profit(total_cost, base, legacy=True)
+    for lo, hi, pct in SELL_PRICE_OVERRIDES:
+        if lo <= base_price <= hi:
+            return pct
+    return base
+
+
 # Superseded profit schedules, oldest first - kept so the sync's
 # automation-set test (generate_xml._formula_priced) still recognises a
 # price set under an older schedule, letting a schedule change reprice
@@ -216,14 +241,19 @@ _SCHEDULE_SETTING = _apply_schedule_setting(_schedule_setting())
 
 
 
-def legacy_profit_percents(total_cost):
+def legacy_profit_percents(total_cost, rule=None):
     """Profit percentages a superseded schedule gave this cost, excluding
-    the current range's own value - empty for costs whose profit never
-    moved."""
+    the current effective value - empty for costs whose profit never
+    moved. When a price range displaces the cost band's own value, that
+    base value counts as superseded too: prices set under it are the
+    automation's own and must follow the range down."""
     if total_cost <= 0:
         return []
-    current = profit_percent(total_cost)
+    current = profit_percent_for(total_cost, rule=rule)
     out = []
+    base = profit_percent(total_cost)
+    if base != current:
+        out.append(base)
     for bands in _SUPERSEDED_PROFIT_BANDS:
         profit = _band_lookup(bands, total_cost)
         if profit != current and profit not in out:
@@ -403,7 +433,8 @@ def calculate_selling_price(
         return 0.0
 
     total_cost = cost_price + shipping_cost
-    retained = total_cost * (1 + profit_percent(total_cost) / 100)
+    _rule_ctx = fee_rule if (fee_rule is not None and platform_fee_percent is None) else None
+    retained = total_cost * (1 + profit_percent_for(total_cost, rule=_rule_ctx) / 100)
     if fee_rule is not None and platform_fee_percent is None:
         return round(price_for_retained(retained, fee_rule, legacy=legacy), 2)
     # The fee is a DIVISOR, never a markup - see the module docstring. The

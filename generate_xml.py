@@ -373,7 +373,7 @@ def _formula_priced(price, cost, ship, fee_rule, profit_override=None, fee_overr
             candidates.append(pricing.calculate_selling_price(cost, ship, fee_rule=fee_rule, legacy=_legacy))
         # Prices set under a band schedule that has since changed (e.g. the
         # above-GBP-100 profit cut, 2026-09-11) are still the automation's own.
-        for _old in pricing.legacy_profit_percents(total):
+        for _old in pricing.legacy_profit_percents(total, rule=fee_rule):
             candidates.append(pricing.price_for_profit(total, _old, platform_fee_percent=pricing.PLATFORM_FEE_PERCENT,
                                                        legacy=_legacy))
             if fee_rule is not None:
@@ -451,7 +451,7 @@ def _fee_cell_auto_values(fee_rule, price):
     return values
 
 
-def _misread_fee_priced(price, cost, ship, fee_cell, profit_override=None):
+def _misread_fee_priced(price, cost, ship, fee_cell, profit_override=None, fee_rule=None):
     """True when `price` is what the sync computed while it MISREAD this row's
     Fee % cell (2026-09-17 .. 2026-10-02: the automation's own effective-fee
     display, e.g. 16.50, taken for a manual override and priced as a flat fee
@@ -468,7 +468,8 @@ def _misread_fee_priced(price, cost, ship, fee_cell, profit_override=None):
     if profit_override is not None:
         profits = [profit_override]
     else:
-        profits = [pricing.profit_percent(total)] + list(pricing.legacy_profit_percents(total))
+        profits = ([pricing.profit_percent_for(total, rule=fee_rule)]
+                   + list(pricing.legacy_profit_percents(total, rule=fee_rule)))
     # The misread priced under the fee model of its time (cell + 1.5 points), so it is recognised under that one.
     return any(abs(pricing.price_for_profit(total, p, platform_fee_percent=fee_cell, legacy=True) - price) < 0.011
                for p in profits)
@@ -582,18 +583,24 @@ def decide_price(*, supplier, cost_price, shipping_cost, fee_rule, existing_pric
     # Fee % / Profit % cells: normally the automation's own report, but
     # a different number typed there is a per-row override - it drives
     # the formula and is never overwritten (resolve_pct_cell).
-    band_now = pricing.profit_percent(total_cost) if cost_price > 0 else None
+    band_now = pricing.profit_percent_for(total_cost, rule=fee_rule) if cost_price > 0 else None
     prev_total = prev_cost + prev_ship
-    band_prev = pricing.profit_percent(prev_total) if prev_total > 0 else None
+    band_prev = pricing.profit_percent_for(prev_total, rule=fee_rule) if prev_total > 0 else None
+    # The displaced cost-band values stay in the auto list: a Profit %
+    # cell the automation wrote BEFORE a price range applied (e.g.
+    # "40") must not be misread as a manual override, or the row would
+    # freeze at the old profit forever.
+    base_now = pricing.profit_percent(total_cost) if cost_price > 0 else None
+    base_prev = pricing.profit_percent(prev_total) if prev_total > 0 else None
     # 0 is the automation's own placeholder (it writes 0.00 for a row with no cost, and a restocked row still
     # shows it): never an intended price - read as a 0% override it priced rows at no profit at all.
     # A superseded schedule's profit for this cost is the automation's own too: a cell written under an older
     # band (20 before the temporary 15, 40 before the 09-11 schedule) must not turn into a manual override just
     # because the band moved and the mirror could not vouch for it (the mirror prefetch used to fail for big
     # batches, so ~1,000 Amazon rows per store stuck at 20.00 while the band was 15).
-    old_bands = ((list(pricing.legacy_profit_percents(total_cost)) if cost_price > 0 else [])
-                 + (list(pricing.legacy_profit_percents(prev_total)) if prev_total > 0 else []))
-    profit_override = resolve_pct_cell(profit_cell, [band_now, band_prev, 0.0] + old_bands,
+    old_bands = ((list(pricing.legacy_profit_percents(total_cost, rule=fee_rule)) if cost_price > 0 else [])
+                 + (list(pricing.legacy_profit_percents(prev_total, rule=fee_rule)) if prev_total > 0 else []))
+    profit_override = resolve_pct_cell(profit_cell, [band_now, band_prev, base_now, base_prev, 0.0] + old_bands,
                                        prev.get("Profit %"), hi=500)
     fee_override = resolve_pct_cell(fee_cell, _fee_cell_auto_values(fee_rule, existing_price), prev.get("Fee %"))
     profit_used = profit_override if profit_override is not None else (band_now or 0)
@@ -612,8 +619,8 @@ def decide_price(*, supplier, cost_price, shipping_cost, fee_rule, existing_pric
     # inflated one of the Fee % misread (2026-10-02).
     fee_typed = _pct_value(fee_cell)
     misread = (fee_override is None and fee_typed is not None
-               and (_misread_fee_priced(existing_price, cost_price, shipping_cost, fee_typed, profit_override)
-                    or _misread_fee_priced(existing_price, prev_cost, prev_ship, fee_typed, profit_override)))
+               and (_misread_fee_priced(existing_price, cost_price, shipping_cost, fee_typed, profit_override, fee_rule)
+                    or _misread_fee_priced(existing_price, prev_cost, prev_ship, fee_typed, profit_override, fee_rule)))
     # The costs (and category rules) the current price may have been set under: the one just fetched, the mirror's
     # last-seen cost, and the cost cell the sheet carries - each under this row's rule and the previous category's.
     _cost_bases = [(cost_price, shipping_cost), (prev_cost, prev_ship)]
@@ -624,7 +631,7 @@ def decide_price(*, supplier, cost_price, shipping_cost, fee_rule, existing_pric
         _formula_priced(existing_price, _c, _s, _r, profit_override, fee_override)
         for _c, _s in _cost_bases for _r in _rules)
     reprice_basis = (fee_rule is not None or profit_override is not None or fee_override is not None
-                     or bool(pricing.legacy_profit_percents(total_cost)) or misread)
+                     or bool(pricing.legacy_profit_percents(total_cost, rule=fee_rule)) or misread)
     if supplier == "Amazon" and formula_price > 0:
         # Amazon rows re-derive from the CURRENT fetched cost - down as
         # well as up (user policy 2026-09-18): a price the automation set
