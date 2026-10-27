@@ -1,0 +1,39 @@
+name: Category Dropdown (sheet validation only)
+
+# Puts the Category dropdown - the strict list of the "OnBuy Categories" tab, the same one the main tab has - on the Category column of a product tab (default: the Amazon tab), so a wrong
+# category can be changed by hand from the cell. Only data validation is touched: no cell value, no OnBuy, no Keepa. dry_run=yes (the default) only reports what the column has now.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tab:
+        description: "Worksheet that gets the dropdown (default Amazon)"
+        required: false
+        default: "Amazon"
+      column:
+        description: "Column header that gets it (default Category)"
+        required: false
+        default: "Category"
+      dry_run:
+        description: "yes = only report, no = set the dropdown"
+        required: false
+        default: "yes"
+
+jobs:
+  dropdown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Category dropdown
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SHEET_TAB: ${{ inputs.tab }}
+          COLUMN: ${{ inputs.column }}
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+        run: python category_dropdown.py
