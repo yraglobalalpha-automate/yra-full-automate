@@ -85,6 +85,10 @@ def main():
     asins = [a for _n, _r, _u, a in picked if a]
     client = keepa_client.KeepaClient.from_env()
     products = client.fetch_products(asins) if asins else {}
+    looked_up = client.real_price_pass(products) if products else {}      # the real-price lookup, as in the sync
+    products.update(looked_up)
+    if looked_up:
+        print(f"Real-price lookup: {len(looked_up)} flagged product(s) looked up again with the Buy Box detail")
     print(f"Keepa answered {len(products)} of {len(set(asins))} ASIN(s); tokens used {client.tokens_consumed}, "
           f"left {client.tokens_left}, refill {client.refill_rate}/min, Buy Box detail {'on' if client.use_buybox else 'off'}\n")
 

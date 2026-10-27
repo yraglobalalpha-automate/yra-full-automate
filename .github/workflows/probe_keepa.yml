@@ -34,6 +34,8 @@ jobs:
           AMAZON_OWN_OFFER_ONLY: ${{ vars.AMAZON_OWN_OFFER_ONLY }}
           KEEPA_REGULAR_PRICE: ${{ vars.KEEPA_REGULAR_PRICE }}
           KEEPA_DROP_HOLD_PERCENT: ${{ vars.KEEPA_DROP_HOLD_PERCENT }}
+          KEEPA_REAL_PRICE_LOOKUP: ${{ vars.KEEPA_REAL_PRICE_LOOKUP }}
+          KEEPA_REAL_PRICE_MAX: ${{ vars.KEEPA_REAL_PRICE_MAX }}
           KEEPA_UPDATE_HOURS: ${{ vars.KEEPA_UPDATE_HOURS }}
           AMAZON_DEFAULT_STOCK: ${{ vars.AMAZON_DEFAULT_STOCK }}
           SHEET_TAB: ${{ inputs.tab }}

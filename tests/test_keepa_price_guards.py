@@ -86,8 +86,9 @@ def test_no_history_means_no_hold_and_the_switch_turns_the_guard_off(monkeypatch
     assert kc.drop_held(product(new=1400, avg30=arr(new=3000), avg90=arr(new=3200)), 1400, "new").startswith("Price held")
 
 
-def test_a_buy_box_price_and_a_dead_product_are_not_second_guessed():
-    assert kc.drop_held(product(new=100, avg30=arr(new=3000)), 100, "buybox") == ""
+def test_a_buy_box_price_is_judged_against_the_new_averages_and_a_dead_product_is_not():
+    assert kc.drop_held(product(new=100, avg30=arr(new=3000)), 100, "buybox").startswith("Price held: now 3%")           # an error price that won the Buy Box is no source either
+    assert kc.drop_held(product(new=100, avg30=arr(new=3000)), 3900, "buybox") == ""
     assert kc.drop_held(product(new=100, avg30=arr(new=3000)), -1, "dead") == ""
 
 

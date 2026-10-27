@@ -85,6 +85,19 @@ except ValueError:
     DROP_HOLD_PERCENT = 40.0
 DROP_HELD = 0               # offers held by guard 2 in this process (the sync prints it at the end)
 
+# 2026-10-27 (follow-up, user: "build the real price lookup"). Guards 1 and 2 refuse a product's cheapest-offer price - and in the request the sync makes (stats only) Keepa shows no third-party
+# price type and no Buy Box, so such a row would simply go out of stock although the product IS on sale at its usual price (B0FB2L7CCX: one Prime FBA seller at about GBP 40 held the Buy Box).
+# For the few flagged products only, real_price_pass makes a second request WITH the Buy Box detail (+2 tokens each): the offer a customer really buys, its price including shipping, who holds
+# it. KEEPA_REAL_PRICE_LOOKUP=0 switches the second look off; KEEPA_REAL_PRICE_MAX (default 100) caps the products looked up per run, the rest stay held.
+LOOKUP_REAL_PRICE = (os.getenv("KEEPA_REAL_PRICE_LOOKUP") or "1").strip().lower() not in ("0", "no", "false", "off")
+try:
+    LOOKUP_MAX = int(os.getenv("KEEPA_REAL_PRICE_MAX") or "100")
+except ValueError:
+    LOOKUP_MAX = 100
+REAL_PRICE_FLAGGED = 0      # products the guards flagged for a second look in this process
+REAL_PRICE_LOOKED_UP = 0    # ... of which a Buy Box request answered
+REAL_PRICE_USED = 0         # rows priced from that Buy Box (the sync prints it at the end)
+
 # availabilityAmazon codes (the "sold by Amazon" offer only)
 AVAILABILITY_TEXT = {
     -1: "No Amazon offer",
@@ -169,7 +182,8 @@ def choose_offer(product, use_buybox=None, own_only=None):
     and "unknown" Amazon offers do not count as in stock - overselling is
     the costlier mistake, the same rule the eBay fetch applies.
     """
-    use_buybox = USE_BUYBOX if use_buybox is None else use_buybox
+    if use_buybox is None:
+        use_buybox = USE_BUYBOX or bool(product.get("_real_price"))       # a product the real-price lookup fetched with the Buy Box detail is read with it
     own_only = OWN_OFFER_ONLY if own_only is None else own_only
     ptype = product.get("productType")
     if ptype == 4:
@@ -192,6 +206,8 @@ def choose_offer(product, use_buybox=None, own_only=None):
                  and not stats.get("buyBoxIsPreorder")
                  and not stats.get("buyBoxIsBackorder")
                  and not stats.get("buyBoxIsUnqualified")
+                 and not stats.get("buyBoxIsUsed")
+                 and not stats.get("buyBoxIsWarehouseDeal")
                  and stats.get("buyBoxAvailabilityMessage") in (None, "IN_STOCK"))
         if bb_ok and (not own_only or stats.get("buyBoxIsAmazon")):
             ship = stats.get("buyBoxShipping")
@@ -279,34 +295,52 @@ def regular_price(product, price, reason):
     return usual
 
 
-def drop_held(product, price, reason):
-    """'' normally; else the text for the sheet when the chosen offer's price is below DROP_HOLD_PERCENT % of the product's usual level (the lower of the
-    30- and 90-day averages of the same price type): an error price or a glitch, not a source. Nothing is held without history or with the guard off."""
-    global DROP_HELD
-    if DROP_HOLD_PERCENT <= 0 or price <= 0 or reason not in ("amazon", "new"):
-        return ""
+def _drop_percent(product, price, reason):
+    """The percentage of the product's usual level (the lower of the 30- and 90-day averages of the same price type; a Buy Box price is judged against the New averages) the offer is at
+    when that is below DROP_HOLD_PERCENT, else None: no history, the guard off or an ordinary price."""
+    if DROP_HOLD_PERCENT <= 0 or price <= 0 or reason not in ("amazon", "new", "buybox"):
+        return None
     stats = product.get("stats") or {}
     idx = IDX_AMAZON if reason == "amazon" else IDX_NEW
     averages = [v for v in (_price(stats.get("avg30") or [], idx), _price(stats.get("avg90") or [], idx)) if v > 0]
     if not averages:
-        return ""
+        return None
     usual = min(averages)
     if price * 100.0 >= usual * DROP_HOLD_PERCENT:
+        return None
+    return int(round(100.0 * price / usual))
+
+
+def drop_held(product, price, reason):
+    """'' normally; else the text for the sheet when the chosen offer's price is below DROP_HOLD_PERCENT % of the product's usual level: an error price or a glitch, not a source."""
+    global DROP_HELD
+    pct = _drop_percent(product, price, reason)
+    if pct is None:
         return ""
     DROP_HELD += 1
-    pct = int(round(100.0 * price / usual))
     logger.info("PRICE DROP HELD: %s is at %d%% of its usual level - treated as unavailable until it recovers", str(product.get("asin") or "?"), pct)
     return f"Price held: now {pct}% of its usual level"
 
 
+def needs_real_price(product):
+    """True when guard 1 or guard 2 refuses the cheapest-offer price of this product and the real-price lookup has not looked at it yet."""
+    if product.get("_real_price"):
+        return False
+    price, _seller, _availability, reason = choose_offer(product, use_buybox=False)
+    return reason == "amazon-unbuyable" or _drop_percent(product, price, reason) is not None
+
+
 def normalize_product(product, asin="", use_buybox=None):
     """(available, data) in get_ebay_data()'s shape for one Keepa product."""
+    global REAL_PRICE_USED
     asin = asin or str(product.get("asin") or "").upper()
     price, seller, availability, _reason = choose_offer(product, use_buybox)
     held = drop_held(product, price, _reason)
     if held:
         price, availability = -1, held
     price = regular_price(product, price, _reason)
+    if price > 0 and _reason == "buybox" and product.get("_real_price"):
+        REAL_PRICE_USED += 1
     data = empty_amazon_response(asin)
     names = _category_names(product)
     data.update({
@@ -376,26 +410,58 @@ class KeepaClient:
         wanted = list(dict.fromkeys(str(a).strip().upper() for a in asins if str(a or "").strip()))
         out = {}
         for start in range(0, len(wanted), BATCH):
-            chunk = wanted[start:start + BATCH]
-            # Worst case per product: 1, +2 with Buy Box detail, +1 when a live
-            # refresh is forced on a copy under an hour old.
-            self._wait_for_tokens(len(chunk) * ((3 if self.use_buybox else 1) + (1 if UPDATE_HOURS == "0" else 0)))
-            params = {
-                "key": self.api_key,
-                "domain": self.domain,
-                "asin": ",".join(chunk),
-                "stats": self.stats_days,
-                "history": 0,
-            }
-            if self.use_buybox:
-                params["buybox"] = 1
-            if UPDATE_HOURS:
-                params["update"] = int(UPDATE_HOURS)
-            body = self._request("product", params)
-            for product in body.get("products") or []:
-                if isinstance(product, dict) and product.get("asin"):
-                    out[str(product["asin"]).upper()] = product
+            out.update(self._fetch_chunk(wanted[start:start + BATCH], self.use_buybox))
         return out
+
+    def _fetch_chunk(self, chunk, buybox):
+        """One product request for up to BATCH ASINs, with the Buy Box detail when `buybox` -> {ASIN: product}."""
+        # Worst case per product: 1, +2 with Buy Box detail, +1 when a live
+        # refresh is forced on a copy under an hour old.
+        self._wait_for_tokens(len(chunk) * ((3 if buybox else 1) + (1 if UPDATE_HOURS == "0" else 0)))
+        params = {
+            "key": self.api_key,
+            "domain": self.domain,
+            "asin": ",".join(chunk),
+            "stats": self.stats_days,
+            "history": 0,
+        }
+        if buybox:
+            params["buybox"] = 1
+        if UPDATE_HOURS:
+            params["update"] = int(UPDATE_HOURS)
+        body = self._request("product", params)
+        out = {}
+        for product in body.get("products") or []:
+            if isinstance(product, dict) and product.get("asin"):
+                out[str(product["asin"]).upper()] = product
+        return out
+
+    def real_price_pass(self, products):
+        """The real-price lookup: the few products whose cheapest-offer price guards 1 and 2 refuse get a second request WITH the Buy Box detail (+2 tokens each), so the offer a customer
+        really buys - its price including shipping - can replace the phantom or error price -> {ASIN: product} to merge over `products`. Never raises: any trouble keeps the first answers
+        and the guards then hold those rows (fail closed)."""
+        global REAL_PRICE_FLAGGED, REAL_PRICE_LOOKED_UP
+        if not LOOKUP_REAL_PRICE or self.use_buybox:
+            return {}
+        flagged = [asin for asin, product in products.items() if needs_real_price(product)]
+        if not flagged:
+            return {}
+        REAL_PRICE_FLAGGED += len(flagged)
+        total = len(flagged)
+        if total > LOOKUP_MAX:
+            logger.warning("Keepa real-price lookup: %d product(s) flagged, only the first %d are looked up this run (KEEPA_REAL_PRICE_MAX) - the others stay held", total, LOOKUP_MAX)
+            flagged = flagged[:LOOKUP_MAX]
+        found = {}
+        try:
+            for start in range(0, len(flagged), BATCH):
+                for asin, product in self._fetch_chunk(flagged[start:start + BATCH], True).items():
+                    product["_real_price"] = True
+                    found[asin] = product
+        except (TransientError, PermanentError) as exc:
+            logger.warning("Keepa real-price lookup stopped (%s) - the products not looked up stay held", exc)
+        REAL_PRICE_LOOKED_UP += len(found)
+        logger.info("Keepa real-price lookup: %d product(s) flagged, %d looked up with the Buy Box detail", total, len(found))
+        return found
 
     def _wait_for_tokens(self, needed):
         """The bucket refills every minute at refillRate; sleep out a

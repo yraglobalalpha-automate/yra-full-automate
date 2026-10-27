@@ -2308,6 +2308,9 @@ def main():
             run_had_errors = True
             logger.error("Keepa fetch failed for %d ASIN(s) - Amazon rows left untouched this run: %s",
                          len(amazon_asins), exc)
+        if not amazon_fetch_failed:
+            # the real-price lookup (keepa_client.real_price_pass): the few products whose cheapest-offer price the Keepa guards refuse get a second look with the Buy Box
+            amazon_products.update(keepa.real_price_pass(amazon_products))
         if KEEPA_PREFETCH_ONLY:
             if amazon_fetch_failed:
                 logger.error("Keepa prefetch failed - nothing cached; the sync job will fetch live")
@@ -3345,6 +3348,8 @@ def main():
     if keepa_client.DROP_HELD:
         logger.info("Amazon offers held because their price fell below %d%% of the usual level (error price / glitch), read as unavailable: %d",
                     int(keepa_client.DROP_HOLD_PERCENT), keepa_client.DROP_HELD)
+    if keepa_client.REAL_PRICE_USED:
+        logger.info("Amazon prices taken from the Buy Box because the cheapest-offer price was refused (phantom Amazon offer / error price): %d", keepa_client.REAL_PRICE_USED)
     if ship_free or ship_paid or ship_unknown:
         logger.info("eBay delivery cost%s: %d free, %d paid (fee GBP mean %.2f, median %.2f, p90 %.2f, max %.2f), "
                     "%d not stated by eBay (cell left as it was); %d Shipping Cost cell(s) %s",
