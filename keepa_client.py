@@ -56,6 +56,7 @@ if UPDATE_HOURS in ("off", "none"):
 
 # stats.current / csv price-type indexes (Keepa "Price Type indexing")
 IDX_AMAZON, IDX_NEW, IDX_COUNT_NEW, IDX_BUY_BOX_SHIPPING = 0, 1, 11, 18
+IDX_NEW_FBM_SHIPPING, IDX_NEW_FBA = 7, 10      # the third-party price types: lowest New FBM offer INCLUDING shipping, lowest New FBA offer
 
 # The USUAL price, not a discount (2026-10-10, user: "a voucher or sale discount at the sourcing must not apply on OnBuy - fetch the real
 # sourcing price only"). stats.current is what the offer costs RIGHT NOW: a Lightning / Prime-Exclusive / Deal-of-the-Day price, a seller's
@@ -70,6 +71,19 @@ try:
 except ValueError:
     REGULAR_MAX_UPLIFT_PERCENT = 35.0
 REGULAR_LIFTED = 0          # prices lifted from a discount to the usual level in this process (the sync prints it at the end)
+
+# 2026-10-27 (Arden 0000069168437 -Messam, ASIN B0FB2L7CCX: an order at GBP 19.73 for a product that normally sells at about GBP 40). Keepa showed
+# Amazon's OWN offer at about a third of the usual price with availabilityAmazon 4 ("Delayed"): not buyable, so the Amazon branch of choose_offer
+# skipped it - but Keepa's "lowest New" INCLUDES Amazon's own offer, so the very same price came back as "3rd party (lowest New)", and the usual-price
+# rule above could lift it by 35% only. Two guards on the data already fetched (no extra tokens):
+#  1. choose_offer: a lowest New that is not above Amazon's own unbuyable offer IS that offer, not a third-party seller;
+#  2. drop_held: a price below DROP_HOLD_PERCENT % of the product's usual level (the lower of its 30- and 90-day averages) is an error price or a glitch,
+#     never a source - the row reads as unavailable (stock 0) until the price is back. KEEPA_DROP_HOLD_PERCENT=0 switches guard 2 off.
+try:
+    DROP_HOLD_PERCENT = float(os.getenv("KEEPA_DROP_HOLD_PERCENT") or "40")
+except ValueError:
+    DROP_HOLD_PERCENT = 40.0
+DROP_HELD = 0               # offers held by guard 2 in this process (the sync prints it at the end)
 
 # availabilityAmazon codes (the "sold by Amazon" offer only)
 AVAILABILITY_TEXT = {
@@ -139,6 +153,12 @@ def _price(current, idx):
     return value if value > 0 else -1
 
 
+def _third_party_price(current):
+    """The lowest third-party New price Keepa shows under a price type of its own (FBA; FBM including shipping), -1 when it shows none."""
+    prices = [p for p in (_price(current, IDX_NEW_FBA), _price(current, IDX_NEW_FBM_SHIPPING)) if p > 0]
+    return min(prices) if prices else -1
+
+
 def choose_offer(product, use_buybox=None, own_only=None):
     """(price_pence, seller, availability_text, reason) for the offer we would
     actually buy from; price -1 when nothing is buyable right now.
@@ -182,6 +202,12 @@ def choose_offer(product, use_buybox=None, own_only=None):
         bb_ok = False
 
     new_price = _price(current, IDX_NEW)
+    if amazon_price > 0 and avail != 0 and new_price >= amazon_price:
+        # Keepa's "lowest New" includes Amazon's own offer: when that is the lowest, it is Amazon's unbuyable offer (delayed, back-order, pre-order,
+        # unknown) and not a seller. Only the third-party price types can still be a source.
+        new_price = _third_party_price(current)
+        if new_price <= 0:
+            return -1, "", f"{AVAILABILITY_TEXT.get(avail, 'Unknown')} (Amazon's own offer only)", "amazon-unbuyable"
     if own_only:
         if new_price > 0 or bb_ok:
             return -1, "", "Third-party sellers only (no Amazon offer)", "third-party-only"
@@ -253,10 +279,33 @@ def regular_price(product, price, reason):
     return usual
 
 
+def drop_held(product, price, reason):
+    """'' normally; else the text for the sheet when the chosen offer's price is below DROP_HOLD_PERCENT % of the product's usual level (the lower of the
+    30- and 90-day averages of the same price type): an error price or a glitch, not a source. Nothing is held without history or with the guard off."""
+    global DROP_HELD
+    if DROP_HOLD_PERCENT <= 0 or price <= 0 or reason not in ("amazon", "new"):
+        return ""
+    stats = product.get("stats") or {}
+    idx = IDX_AMAZON if reason == "amazon" else IDX_NEW
+    averages = [v for v in (_price(stats.get("avg30") or [], idx), _price(stats.get("avg90") or [], idx)) if v > 0]
+    if not averages:
+        return ""
+    usual = min(averages)
+    if price * 100.0 >= usual * DROP_HOLD_PERCENT:
+        return ""
+    DROP_HELD += 1
+    pct = int(round(100.0 * price / usual))
+    logger.info("PRICE DROP HELD: %s is at %d%% of its usual level - treated as unavailable until it recovers", str(product.get("asin") or "?"), pct)
+    return f"Price held: now {pct}% of its usual level"
+
+
 def normalize_product(product, asin="", use_buybox=None):
     """(available, data) in get_ebay_data()'s shape for one Keepa product."""
     asin = asin or str(product.get("asin") or "").upper()
     price, seller, availability, _reason = choose_offer(product, use_buybox)
+    held = drop_held(product, price, _reason)
+    if held:
+        price, availability = -1, held
     price = regular_price(product, price, _reason)
     data = empty_amazon_response(asin)
     names = _category_names(product)

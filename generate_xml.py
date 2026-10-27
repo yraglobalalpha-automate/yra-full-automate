@@ -3342,6 +3342,9 @@ def main():
         logger.info("Amazon prices kept above the formula (set by hand): %d", amazon_manual_kept)
     if keepa_client.REGULAR_LIFTED:
         logger.info("Amazon prices taken from the usual level instead of a deal / voucher / sale price: %d", keepa_client.REGULAR_LIFTED)
+    if keepa_client.DROP_HELD:
+        logger.info("Amazon offers held because their price fell below %d%% of the usual level (error price / glitch), read as unavailable: %d",
+                    int(keepa_client.DROP_HOLD_PERCENT), keepa_client.DROP_HELD)
     if ship_free or ship_paid or ship_unknown:
         logger.info("eBay delivery cost%s: %d free, %d paid (fee GBP mean %.2f, median %.2f, p90 %.2f, max %.2f), "
                     "%d not stated by eBay (cell left as it was); %d Shipping Cost cell(s) %s",

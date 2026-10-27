@@ -56,6 +56,7 @@ jobs:
           KEEPA_BUYBOX: ${{ vars.KEEPA_BUYBOX }}
           AMAZON_OWN_OFFER_ONLY: ${{ vars.AMAZON_OWN_OFFER_ONLY }}
           KEEPA_REGULAR_PRICE: ${{ vars.KEEPA_REGULAR_PRICE }}
+          KEEPA_DROP_HOLD_PERCENT: ${{ vars.KEEPA_DROP_HOLD_PERCENT }}
           KEEPA_UPDATE_HOURS: ${{ vars.KEEPA_UPDATE_HOURS }}
           AMAZON_DEFAULT_STOCK: ${{ vars.AMAZON_DEFAULT_STOCK }}
           # eBay credentials stay available for a mixed batch; an all-Amazon
