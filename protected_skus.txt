@@ -13,3 +13,8 @@
 # 2026-10-21 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
 # 2026-10-22 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
 # 2026-10-26 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+# 2026-10-27 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+277477841973  # Sheet1 row 3679: row = Roxel RBS-300 Passive Bookshelf Speaker Pair, | page = Roxel RBS300 Bookshelf Speaker 150W - Oak Woo
+279141609995  # Sheet1 row 3701: row = Roxel RBS-300 Passive Bookshelf Speaker Pair | page = Roxel RBS300 Bookshelf Speaker Set 150W - Bla
+# 2026-10-27 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+167288027867  # Amazon row 482: row = Dehumidifier 12L/Day, Ultra-quiet Dehumidifie | page = 12L/day Dehumidifier with Humidity Sensor & D
