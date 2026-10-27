@@ -8,12 +8,19 @@ Product Created/Listing Active/Product ID, and Last Checked Time (so the
 oldest-first batch picks them up immediately) - and the next run creates
 them fresh, with the activation pass pushing price/stock right after.
 SKUs come from the RESET_SKUS env (default: the store's audited conflict
-list). DRY_RUN default on."""
+list). DRY_RUN default on.
+
+2026-10-27: SHEET_TAB names the worksheet whose rows are reset (workflow input `tab`; blank = the main
+product tab, looked up by name). The Amazon tab's rows (YRA 333596702103, a dishwasher under the wrong
+category that OnBuy would not move) need the same reset. With a named tab the SKUs must be listed
+explicitly - the audited default list belongs to the main tab."""
 import json
 import os
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+
+import sheet_tabs
 
 SHEET_NAME = "YRA_Full_Feed_Master"
 DEFAULT_SKUS = (
@@ -87,6 +94,7 @@ DEFAULT_SKUS = (
 )
 SKUS = {s.strip() for s in (os.getenv("RESET_SKUS") or DEFAULT_SKUS).split(",") if s.strip()}
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
+SHEET_TAB = (os.getenv("SHEET_TAB") or "").strip()
 CLEAR_COLS = ["Sync Status", "OPC", "Last OnBuy Sync", "OnBuy Product Created",
               "OnBuy Listing Active", "OnBuy Product ID", "Last Checked Time"]
 
@@ -99,11 +107,19 @@ def col_letter(n):
     return s
 
 
+def open_tab(book, tab):
+    """The worksheet to reset rows on: the one named in `tab` (e.g. Amazon), else the main product tab - found by name, never by position."""
+    return book.worksheet(tab) if tab else sheet_tabs.product_sheet(book)
+
+
 def main():
+    if SHEET_TAB and not (os.getenv("RESET_SKUS") or "").strip():
+        raise SystemExit(f"STOP: tab {SHEET_TAB!r} needs an explicit SKU list - the audited default list belongs to the main tab")
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
         creds_dict, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
-    sheet = gspread.authorize(creds).open(SHEET_NAME).sheet1
+    sheet = open_tab(gspread.authorize(creds).open(SHEET_NAME), SHEET_TAB)
+    print(f"tab: {sheet.title}")
     headers = [str(h).strip() for h in sheet.row_values(1)]
     col_map = {h: i for i, h in enumerate(headers)}
     missing = [c for c in CLEAR_COLS if c not in col_map]
