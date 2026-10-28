@@ -16,3 +16,6 @@
 279141609995  # Sheet1 row 3701: row = Roxel RBS-300 Passive Bookshelf Speaker Pair | page = Roxel RBS300 Bookshelf Speaker Set 150W - Bla
 # 2026-10-27 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
 167288027867  # Amazon row 482: row = Dehumidifier 12L/Day, Ultra-quiet Dehumidifie | page = 12L/day Dehumidifier with Humidity Sensor & D
+# 2026-10-28 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+# 2026-10-28 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+166750194465  # Amazon row 455: row = EZVIZWiFiVideoDoorViewer,WirelessPeepholeCame | page = EZVIZ WiFi Video Door Viewer, Wireless Peepho
