@@ -72,6 +72,8 @@ jobs:
           ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
           ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
           ONBUY_API_PUSH_ENABLED: ${{ vars.ONBUY_API_PUSH_ENABLED }}
+          DELIVERY_TEMPLATE_EBAY: ${{ vars.DELIVERY_TEMPLATE_EBAY }}
+          DELIVERY_TEMPLATE_AMAZON: ${{ vars.DELIVERY_TEMPLATE_AMAZON }}
           OVERSELL_GUARD: ${{ vars.OVERSELL_GUARD }}   # oversell_guard.py kill switch (0 = off)
           ONBUY_CREATE_ENABLED: ${{ vars.ONBUY_CREATE_ENABLED }}
           ONBUY_API_TEST_SKUS: ${{ vars.AMAZON_TEST_SKUS }}

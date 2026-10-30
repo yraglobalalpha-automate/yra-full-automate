@@ -83,6 +83,28 @@ _MAX_PRODUCTS_PER_RUN_OVERRIDE = os.getenv("MAX_PRODUCTS_PER_RUN")
 SHEET_TAB = (os.getenv("SHEET_TAB") or "").strip()
 FEED_FILE = (os.getenv("FEED_FILE") or "feed.xml").strip()
 
+
+# The supplier's delivery template rides the price/stock pushes (user 2026-10-30: "do that eBay and Amazon template specific
+# application on product creation time, not later"): a new listing is born on the account's default template, so the activation
+# pass and the per-row updates set the right one in the same request. Empty variables = the field stays out of every request.
+DELIVERY_TEMPLATE_EBAY = (os.getenv("DELIVERY_TEMPLATE_EBAY") or "").strip()
+DELIVERY_TEMPLATE_AMAZON = (os.getenv("DELIVERY_TEMPLATE_AMAZON") or "").strip()
+
+
+def row_delivery_template(row):
+    """The template this row's listing belongs on, or None. The Amazon tab's rows go on the Amazon template; a first-tab row by its
+    Supplier URL (delivery_templates.classify) - AliExpress and unknown suppliers stay wherever they are (the default template)."""
+    if not (DELIVERY_TEMPLATE_EBAY or DELIVERY_TEMPLATE_AMAZON):
+        return None
+    if SHEET_TAB.lower() == "amazon":
+        return DELIVERY_TEMPLATE_AMAZON or None
+    try:
+        from delivery_templates import classify
+        cls = classify(str(row.get("Supplier URL") or ""))
+    except Exception:
+        return None
+    return {"ebay": DELIVERY_TEMPLATE_EBAY or None, "amazon": DELIVERY_TEMPLATE_AMAZON or None}.get(cls)
+
 # ================= PRICE CHECK FLAG THRESHOLDS =================
 # Measured against the margin the formula gives THAT row (its cost band and
 # its category's real commission, 2026-09-09) rather than a fixed 40%:
@@ -1967,7 +1989,7 @@ def main():
             if not sku or a_price <= 0 or a_stock <= 0:
                 continue
             pending_activation.append((idx, sku, a_price, a_stock,
-                                       str(row.get("Last Checked Time") or "")))
+                                       str(row.get("Last Checked Time") or ""), row_delivery_template(row)))
         # Freshest creations first - they are the ones still inside the
         # editable window.
         pending_activation.sort(key=lambda t: t[4], reverse=True)
@@ -1990,7 +2012,7 @@ def main():
             onbuy_pushes_this_run += 1
             try:
                 results = onbuy.update_listings_by_sku_batch(
-                    [(sku, a_price, a_stock) for _idx, sku, a_price, a_stock, _t in chunk])
+                    [(sku, a_price, a_stock, tmpl) for _idx, sku, a_price, a_stock, _t, tmpl in chunk])
             except (TransientError, AuthError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
                 logger.warning("Activation batch postponed: %s", exc)
                 if isinstance(exc, AuthError):
@@ -2007,7 +2029,7 @@ def main():
                 s = str(it.get("sku") or "").strip()
                 if s:
                     outcome[s] = str(it.get("error") or "").strip()
-            for idx, sku, _p, _s2, _t in chunk:
+            for idx, sku, _p, _s2, _t, _tmpl in chunk:
                 i = idx + 2
                 if sku not in outcome:
                     act_waiting += 1
@@ -2770,7 +2792,7 @@ def main():
                 if already_created:
                     if selling_price <= 0:
                         raise _SkipPushNoPrice()
-                    result = onbuy.update_listing(sku=sku, price=selling_price, stock=stock)
+                    result = onbuy.update_listing(sku=sku, price=selling_price, stock=stock, delivery_template_id=row_delivery_template(row))
                     action = "updated"
                 else:
                     # A row can reach the create path with its SKU ALREADY a
@@ -2796,7 +2818,7 @@ def main():
                         logger.info("live-SKU pre-create check failed for %s (%s) - proceeding with create", sku, str(_exc)[:80])
                     if _live_hit:
                         logger.info("SKU %s is already a live listing - adopting via update instead of creating a duplicate", sku)
-                        result = onbuy.update_listing(sku=sku, price=selling_price, stock=stock)
+                        result = onbuy.update_listing(sku=sku, price=selling_price, stock=stock, delivery_template_id=row_delivery_template(row))
                         action = "updated"
                     else:
                         action, result = onbuy.sync_product(

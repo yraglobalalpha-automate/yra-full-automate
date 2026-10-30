@@ -31,6 +31,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or ""
 TABLE = os.getenv("SUPABASE_TABLE") or "YRA_Full_Feed_Master"
 
 DRY_RUN = (os.getenv("DRY_RUN") or "1").strip().lower() not in ("0", "no", "false", "")
+DELIVERY_TEMPLATE_EBAY = (os.getenv("DELIVERY_TEMPLATE_EBAY") or "").strip()
+DELIVERY_TEMPLATE_AMAZON = (os.getenv("DELIVERY_TEMPLATE_AMAZON") or "").strip()
 # With LIMIT_SKUS given, SKIP_PROBE=1 trusts the caller and skips the ~30
 # listings-page reads (OnBuy answered them with read-timeouts on
 # 2026-07-30) - attaching an already-listed SKU just returns a harmless
@@ -142,8 +144,20 @@ def main():
         if price <= 0:
             skipped_priceless += 1
             continue
-        candidates.append({"opc": opc, "sku": sku, "condition": "new",
-                           "price": round(price, 2), "stock": stock})
+        item = {"opc": opc, "sku": sku, "condition": "new",
+                "price": round(price, 2), "stock": stock}
+        # Born on the right delivery template (user 2026-10-30): by the row's Supplier URL; unknown suppliers carry no field.
+        tmpl = None
+        if DELIVERY_TEMPLATE_EBAY or DELIVERY_TEMPLATE_AMAZON:
+            try:
+                from delivery_templates import classify
+                tmpl = {"ebay": DELIVERY_TEMPLATE_EBAY or None,
+                        "amazon": DELIVERY_TEMPLATE_AMAZON or None}.get(classify(str(r.get("Supplier URL") or "")))
+            except Exception:
+                tmpl = None
+        if tmpl:
+            item["delivery_template_id"] = int(tmpl)
+        candidates.append(item)
 
     logger.info("Listings to attach: %d (skipped %d rows with no usable price; "
                 "%d already listed; cap %d)", len(candidates), skipped_priceless,

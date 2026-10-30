@@ -201,14 +201,17 @@ class OnBuyClient:
 
         return with_retry(_do_create, what=f"onbuy create_product({sku})", max_attempts=3)
 
-    def update_listing(self, *, sku, price, stock):
+    def update_listing(self, *, sku, price, stock, delivery_template_id=None):
         # Some listings are held under a corrupted SKU (sku_aliases.py); the
         # wire SKU is the platform's, every log line stays in ours.
         wire = sku_aliases.to_onbuy(sku)
+        record = {"sku": wire, "price": price, "stock": stock, "boost_marketing_commission": 0}
+        if delivery_template_id:
+            record["delivery_template_id"] = int(delivery_template_id)      # the supplier's template rides the same PUT (user 2026-10-30)
         payload = {
             "site_id": self.site_id,
             "seller_id": self.seller_id,
-            "listings": [{"sku": wire, "price": price, "stock": stock, "boost_marketing_commission": 0}],
+            "listings": [record],
         }
         label = sku if wire == sku else f"{sku} as {wire}"
 
@@ -231,12 +234,16 @@ class OnBuyClient:
         result list; callers handle each item's optional "error" field (this
         endpoint answers 200 with per-item errors inline, so an all-or-
         nothing raise would hide partial success)."""
+        def _rec(item):
+            out = {"sku": sku_aliases.to_onbuy(item[0]), "price": item[1], "stock": item[2], "boost_marketing_commission": 0}
+            if len(item) > 3 and item[3]:
+                out["delivery_template_id"] = int(item[3])      # (sku, price, stock, template) - user 2026-10-30
+            return out
+
         payload = {
             "site_id": self.site_id,
             "seller_id": self.seller_id,
-            "listings": [{"sku": sku_aliases.to_onbuy(s), "price": p, "stock": st,
-                          "boost_marketing_commission": 0}
-                         for s, p, st in listings],
+            "listings": [_rec(item) for item in listings],
         }
 
         def _do_batch():
