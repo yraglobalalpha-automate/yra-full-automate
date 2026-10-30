@@ -168,9 +168,21 @@ def read_sources(book):
 def mode_probe():
     print(f"probe | push enabled: {PUSH_ENABLED}")
     ok_uk, _ = count_listings(uk_client(), "UK")
-    ok_de, total_de = count_listings(de_client(), "Germany")
+    de = de_client()
+    ok_de, total_de = count_listings(de, "Germany")
     if ok_de:
         print(f"GERMANY: ENABLED for this account - {total_de} listing(s) there today. EUR pricing applies (site {SITE_DE}).")
+        try:
+            queue = de.list_queue(limit=20) or []
+            items = queue.get("results") if isinstance(queue, dict) else queue
+            items = items if isinstance(items, list) else []
+            print(f"creation queue on the German site: {len(items)} entry(ies) in the last page")
+            for q in items[:20]:
+                q = q or {}
+                print(f"   queue {q.get('queue_id') or q.get('id') or '?'} | sku {q.get('sku') or '?'} | status {q.get('status') or q.get('outcome') or '?'}"
+                      + (f" | {str(q.get('error') or '').strip()[:140]}" if q.get("error") else ""))
+        except Exception as exc:                                 # noqa: BLE001 - the probe prints, it never crashes
+            print(f"creation queue read failed: {exc}")
     else:
         print("GERMANY: NOT reachable with these keys. Enable international selling / Germany in the OnBuy Seller Control Panel, then probe again.")
     return 0 if ok_uk else 1
@@ -293,19 +305,24 @@ def mode_sync(book):
             err = str((item or {}).get("error") or "").strip()
             if err:
                 errors[str(item.get("sku") or "").strip()] = err
-    created_ok = 0
+    created_ok, queued = 0, False
     if creates:
         body = onbuy.create_listings_batch(creates)
         results = body.get("results") if isinstance(body, dict) else body
-        listed = {str((it or {}).get("sku") or "").strip(): str((it or {}).get("error") or "").strip()
-                  for it in (results if isinstance(results, list) else [])}
-        for c in creates:
-            err = listed.get(c["sku"], "")
-            if err:
-                errors[c["sku"]] = err
-            else:
-                created_ok += 1
-    print(f"DONE: {len(updates) - sum(1 for s, _, _ in updates if s in errors)} updated, {created_ok} created, {len(errors)} error(s)")
+        if isinstance(results, list) and results:
+            listed = {str((it or {}).get("sku") or "").strip(): str((it or {}).get("error") or "").strip() for it in results}
+            for c in creates:
+                err = listed.get(c["sku"], "")
+                if err:
+                    errors[c["sku"]] = err
+                else:
+                    created_ok += 1
+        else:
+            # OnBuy queues creations (the UK flow is built around that queue): the batch was ACCEPTED, the outcomes land in the
+            # site's creation queue - probe prints it. Never claim "created" for an answer that named no listings.
+            queued = len(creates) > 0
+            print(f"creation ACCEPTED for {len(creates)} listing(s) - OnBuy queues creations; run mode=probe for the queue's outcomes. Response keys: {sorted(body) if isinstance(body, dict) else type(body).__name__}")
+    print(f"DONE: {len(updates) - sum(1 for s, _, _ in updates if s in errors)} updated, {created_ok} created, {len(creates) if queued else 0} queued, {len(errors)} error(s)")
     for sku, err in list(errors.items())[:10]:
         print(f"   ERROR {sku}: {err[:160]}")
 
@@ -315,9 +332,10 @@ def mode_sync(book):
         touched = sku in {s for s, _, _ in updates} or any(c["sku"] == sku for c in creates)
         if not touched:
             continue
-        listed_now = sku in existing or (any(c["sku"] == sku for c in creates) and sku not in errors)
+        created_here = any(c["sku"] == sku for c in creates) and sku not in errors
+        listed_word = "yes" if sku in existing else ("queued" if created_here and queued else ("yes" if created_here else ""))
         for col_name, value in (("EUR Price", p["eur"]), ("Stock", p["stock"]), ("GBP Price", p["gbp"]),
-                                ("DE Listed", "yes" if listed_now else ""), ("DE Error", errors.get(sku, "")),
+                                ("DE Listed", listed_word), ("DE Error", errors.get(sku, "")),
                                 ("Last Synced", stamp), ("Note", p["note"])):
             col = _col(header, col_name)
             if col:
