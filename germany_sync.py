@@ -19,6 +19,7 @@ no built-in rate: a stale default would misprice a whole market quietly. EU site
 refuses a creation for a missing GPSR field the per-SKU error lands in the tab's "DE Error" column for the owner to see.
 """
 import json
+import logging
 import os
 import sys
 import time
@@ -348,6 +349,7 @@ def mode_sync(book):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s")           # the client logs every raw OnBuy answer - the only window into the queue's behaviour
     print(f"germany_sync | mode {MODE} | tab '{TAB}' | site {SITE_DE}")
     if MODE == "probe":
         return mode_probe()
