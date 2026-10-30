@@ -186,6 +186,13 @@ def mode_probe():
             print(f"creation queue read failed: {exc}")
     else:
         print("GERMANY: NOT reachable with these keys. Enable international selling / Germany in the OnBuy Seller Control Panel, then probe again.")
+    for path in ("seller-entities", "sellers/entities", "sites"):
+        try:
+            resp = de._send("GET", f"https://api.onbuy.com/v2/{path}", what=f"probe {path}", params={}, timeout=30)
+            text = resp.text[:700]
+            print(f"GET /{path}: HTTP {resp.status_code} - {text}")
+        except Exception as exc:                                 # noqa: BLE001
+            print(f"GET /{path}: {exc}")
     return 0 if ok_uk else 1
 
 
@@ -311,7 +318,16 @@ def mode_sync(book):
         body = onbuy.create_listings_batch(creates)
         results = body.get("results") if isinstance(body, dict) else body
         if isinstance(results, list) and results:
-            listed = {str((it or {}).get("sku") or "").strip(): str((it or {}).get("error") or "").strip() for it in results}
+            listed = {}
+            for it in results:
+                it = it or {}
+                sku = str(it.get("sku") or "").strip()
+                failed = it.get("success") is False or it.get("error")
+                why = str(it.get("message") or it.get("error") or "").strip()
+                if it.get("errors"):
+                    why = (why + " | " + "; ".join(f"{k}: {', '.join(map(str, v)) if isinstance(v, list) else v}"
+                                                   for k, v in it["errors"].items())).strip(" |")
+                listed[sku] = why if failed else ""
             for c in creates:
                 err = listed.get(c["sku"], "")
                 if err:
