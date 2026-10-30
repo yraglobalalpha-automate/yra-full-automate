@@ -1,0 +1,70 @@
+name: Germany (probe / tab / populate / sync)
+
+# OnBuy Germany (site 2002, EUR) from the same sheet: the "Germany" tab is fed by Sheet1 + Amazon and synced to the German site.
+# probe reads only; setup_tab/populate touch the sheet only; sync sends prices/stock to OnBuy Germany when dry_run=no
+# (and creates missing German listings only when create_missing=yes, capped by max_create). EUR_PER_GBP is a repository
+# variable and REQUIRED for populate/sync: prices on site 2002 are in euros.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "probe / setup_tab / populate / sync"
+        required: true
+        default: "probe"
+      dry_run:
+        description: "yes = plan only (populate and sync)"
+        required: false
+        default: "yes"
+      create_missing:
+        description: "yes = sync may CREATE German listings for rows that have none (capped by max_create)"
+        required: false
+        default: "no"
+      max_create:
+        description: "most listings one sync may create"
+        required: false
+        default: "25"
+      skus:
+        description: "only these SKUs (space/comma separated) - the canary switch"
+        required: false
+        default: ""
+      include_oos:
+        description: "populate: yes = also copy rows with stock 0"
+        required: false
+        default: "no"
+
+concurrency:
+  group: onbuy-api
+  cancel-in-progress: false
+
+jobs:
+  germany:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Germany ${{ inputs.mode }}
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ONBUY_USE_SANDBOX: ${{ vars.ONBUY_USE_SANDBOX }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
+          ONBUY_TEST_CONSUMER_KEY: ${{ secrets.ONBUY_TEST_CONSUMER_KEY }}
+          ONBUY_TEST_SECRET_KEY: ${{ secrets.ONBUY_TEST_SECRET_KEY }}
+          ONBUY_SELLER_ID: ${{ secrets.ONBUY_SELLER_ID }}
+          ONBUY_SITE_ID: ${{ secrets.ONBUY_SITE_ID }}
+          ONBUY_API_PUSH_ENABLED: ${{ vars.ONBUY_API_PUSH_ENABLED }}
+          EUR_PER_GBP: ${{ vars.EUR_PER_GBP }}
+          GERMANY_UPLIFT_PERCENT: ${{ vars.GERMANY_UPLIFT_PERCENT }}
+          MODE: ${{ inputs.mode }}
+          DRY_RUN: ${{ inputs.dry_run == 'no' && '0' || '1' }}
+          CREATE_MISSING: ${{ inputs.create_missing == 'yes' && '1' || '0' }}
+          MAX_CREATE: ${{ inputs.max_create }}
+          ONLY_SKUS: ${{ inputs.skus }}
+          INCLUDE_OOS: ${{ inputs.include_oos == 'yes' && '1' || '0' }}
+        run: python -u germany_sync.py
