@@ -7,7 +7,7 @@ name: Amazon Sync (Keepa)
 # so each hour carries one pipeline's OnBuy pushes (240 calls/hour quota).
 on:
   schedule:
-    - cron: "13 0-20/4 * * *"   # every 4h / 6 a day: EVEN hours 0,4,...,20 at :13 - THIS store's eBay sync runs the odd hours (:31); Arden holds the odd hours on the shared second key
+    - cron: "13 0-18/6 * * *"   # every 6h / 4 a day (user 2026-10-31: the second Keepa key now feeds THREE stores): even hours 0,6,12,18 at :13 - this store's eBay sync keeps the odd hours (:31); Arden draws at 3,9,15,21 and Kidoomi at 2,8,14,20 on the same key, so the bucket refills between draws
   workflow_dispatch:
     inputs:
       recategorize:
