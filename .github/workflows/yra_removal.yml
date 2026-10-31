@@ -33,6 +33,10 @@ on:
         description: "yes = report only; no = remove for real"
         required: false
         default: "yes"
+      max_remove:
+        description: "Refuse a live run whose plan removes more rows than this"
+        required: false
+        default: "2200"
 
 permissions:
   contents: read
@@ -59,6 +63,7 @@ jobs:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           OOS_LIST_FILE: ${{ inputs.oos_list_file }}
           OOS_LIST_ALLOW_IN_STOCK: ${{ inputs.allow_in_stock }}
+          MAX_REMOVE: ${{ inputs.max_remove || '2200' }}
           BACKUP_TAB: ${{ inputs.backup_tab }}
           DUP_LIST_FILE: ${{ inputs.dup_list_file }}
           REMOVE_LIVE_DUPS: ${{ inputs.remove_live_dups }}
