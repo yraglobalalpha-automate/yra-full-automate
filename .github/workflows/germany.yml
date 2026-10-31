@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "probe / setup_tab / populate / sync"
+        description: "probe / setup_tab / populate / sync / prune"
         required: true
         default: "probe"
       dry_run:
@@ -32,6 +32,14 @@ on:
         description: "populate: yes = also copy rows with stock 0"
         required: false
         default: "no"
+      prune_list:
+        description: "prune: repo path of the SKUs to remove from the Germany tab (one per line)"
+        required: false
+        default: ""
+      backup_tab:
+        description: "prune: backup tab for the removed rows (created, or appended to)"
+        required: false
+        default: "Removed 2026-10-31"
 
 concurrency:
   group: onbuy-api
@@ -67,4 +75,6 @@ jobs:
           MAX_CREATE: ${{ inputs.max_create }}
           ONLY_SKUS: ${{ inputs.skus }}
           INCLUDE_OOS: ${{ inputs.include_oos == 'yes' && '1' || '0' }}
+          PRUNE_LIST_FILE: ${{ inputs.prune_list }}
+          BACKUP_TAB: ${{ inputs.backup_tab || 'Removed 2026-10-31' }}
         run: python -u germany_sync.py

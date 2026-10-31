@@ -13,6 +13,9 @@ Modes (MODE env):
   sync       the recurring job: refresh each Germany row's GBP price + stock from its source tab, price it in EUR
              (EUR = GBP x EUR_PER_GBP x (1 + GERMANY_UPLIFT_PERCENT/100)), then update the German listings; rows whose OPC has no
              German listing yet are CREATED only with CREATE_MISSING=1, at most MAX_CREATE per run. DRY_RUN=1 plans, writes nothing.
+  prune      remove Germany rows whose SKU is on PRUNE_LIST_FILE (one per line) - populate is additive, so a product culled from
+             the UK tabs lingers here and would come back as a German listing at launch. Every removed row is backed up to
+             BACKUP_TAB first (bulk_remove_rows machinery); matching ignores leading zeros. DRY_RUN=1 only reports.
 
 Prices must be in EUR on site 2002 (the API lists per-site currencies), so EUR_PER_GBP is REQUIRED for populate and sync - there is
 no built-in rate: a stale default would misprice a whole market quietly. EU sites also accept GPSR (product safety) fields; if OnBuy
@@ -260,6 +263,44 @@ def mode_populate(book):
     return 0
 
 
+def mode_prune(book):
+    import bulk_remove_rows as brr                                # import here: brr reads BACKUP_TAB from the env when loaded
+    path = (os.getenv("PRUNE_LIST_FILE") or "").strip()
+    if not path:
+        raise SystemExit("PRUNE_LIST_FILE is required for prune - this mode never runs without an explicit list")
+    with open(path, encoding="utf-8") as fh:
+        wanted = {ln.strip() for ln in fh if ln.strip() and not ln.startswith("#")}
+    canon = {(s.lstrip("0") or s) for s in wanted}                # USER_ENTERED appends can drop a leading zero on the tab
+    tab = book.worksheet(TAB)
+    values = with_retry(tab.get_all_values, what="germany read", max_attempts=3)
+    header = [str(h).strip() for h in values[0]]
+    if "SKU" not in header:
+        raise SystemExit(f"tab {TAB!r} lacks a SKU header - refusing to continue")
+    si = header.index("SKU")
+    hits = []
+    for n, row in enumerate(values[1:], start=2):
+        sku = (str(row[si]) if si < len(row) else "").replace(",", "").strip()
+        if sku and (sku.lstrip("0") or sku) in canon:
+            hits.append({"tab": TAB, "row": n, "sku": sku,
+                         "reason": f"on {os.path.basename(path)} (UK row + listing removed)", "cells": list(row)})
+    print(f"prune | Germany rows matching the list: {len(hits)} of {len(values) - 1} (list holds {len(wanted)} SKU(s))")
+    for h in hits[:5]:
+        print(f"   e.g. row {h['row']} SKU {h['sku']}")
+    if DRY_RUN:
+        print("DRY RUN - nothing removed from the tab.")
+        return 0
+    if not hits:
+        print("nothing to prune")
+        return 0
+    brr.write_backup(book, {TAB: header}, hits)
+    deleted, skipped = brr.delete_rows(book, TAB, [h["sku"] for h in hits])
+    print(f"PRUNED {deleted} row(s) from '{TAB}'" + (f" | skipped (SKU on several rows): {len(skipped)}" if skipped else ""))
+    col = with_retry(lambda: tab.col_values(si + 1), what="verify", max_attempts=3)
+    left = sum(1 for v in col[1:] if (str(v).replace(",", "").strip().lstrip("0") or str(v).strip()) in canon)
+    print(f"VERIFY: {left} listed SKU(s) still on '{TAB}'")
+    return 0
+
+
 def _col(header, name):
     return header.index(name) + 1 if name in header else 0
 
@@ -376,7 +417,9 @@ def main():
         return mode_populate(book)
     if MODE == "sync":
         return mode_sync(book)
-    print(f"unknown MODE '{MODE}' (probe / setup_tab / populate / sync)")
+    if MODE == "prune":
+        return mode_prune(book)
+    print(f"unknown MODE '{MODE}' (probe / setup_tab / populate / sync / prune)")
     return 1
 
 
