@@ -36,7 +36,7 @@ def classify(node):
     else:
         err = str(node or "").strip()
     low = err.lower()
-    if "not found" in low or "does not exist" in low:
+    if "not found" in low or "does not exist" in low or "already removed" in low:
         return "gone"
     if "suspended" in low:
         return "suspended"
