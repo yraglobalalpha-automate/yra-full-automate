@@ -1,12 +1,16 @@
-"""READ-ONLY and FREE: Keepa's own account of the key this repository holds.
+"""READ-ONLY and FREE: which Keepa key does this repository hold, and what does Keepa say about it?
 
-GET https://api.keepa.com/token costs no tokens. It answers how many tokens the key holds now, its refill rate and the
-milliseconds until the next refill - the refill CLOCK belongs to the key (the account), so two repositories whose
-KEEPA_API_KEY secret is the SAME key report the same clock (server time + refillIn modulo one minute stays constant) and
-the same bucket, while different keys keep different clocks. GitHub never shows a secret's value, so this is how a
-repository's key can be told apart from another's without ever printing either one.
+1. KEY FINGERPRINT - the first 8 hex characters of SHA-256 of the KEEPA_API_KEY secret. A one-way hash of a long random key
+   cannot be turned back into the key; two repositories holding the SAME key print the same 8 characters, different keys
+   differ. GitHub never shows a secret's value, so this is how "which repositories share a key" is answered exactly - at
+   rest or under load, no timing needed.
+2. KEEPA'S OWN BUCKET - GET https://api.keepa.com/token costs no tokens: tokens left and the refill rate, three readings
+   20 seconds apart. Repositories on one key move together; keys on separate buckets drift apart. (Keepa ticks every key on
+   one global minute clock, so the clock itself is NOT a fingerprint, and two idle full buckets both read 1,200 - the hash
+   is what settles it.)
 
-Three readings, 20 seconds apart: the clock must repeat for the fingerprint to count. Nothing is written anywhere."""
+Nothing is written anywhere and the key itself is never printed."""
+import hashlib
 import json
 import os
 import sys
@@ -18,6 +22,8 @@ key = (os.getenv("KEEPA_API_KEY") or "").strip()
 if not key:
     sys.exit("KEEPA_API_KEY is not set in this repository")
 
+print(f"KEEPA_KEY_FINGERPRINT|sha256_first8={hashlib.sha256(key.encode()).hexdigest()[:8]}")
+
 for n in range(3):
     if n:
         time.sleep(20)
@@ -27,9 +33,8 @@ for n in range(3):
     except Exception as exc:                                       # the URL carries the key: never print the exception text
         print(f"READING {n + 1}: request failed ({type(exc).__name__})")
         continue
-    left, rate, refill_in, stamp = body.get("tokensLeft"), body.get("refillRate"), body.get("refillIn"), body.get("timestamp")
-    phase = (stamp + refill_in) % 60000 if isinstance(stamp, (int, float)) and isinstance(refill_in, (int, float)) else None
-    print(f"KEEPA_READING|n={n + 1}|http={resp.status_code}|tokens_left={left}|refill_rate={rate}|refill_in_ms={refill_in}|server_ms={stamp}|clock_phase_ms={phase}")
+    left, rate, refill_in = body.get("tokensLeft"), body.get("refillRate"), body.get("refillIn")
+    print(f"KEEPA_READING|n={n + 1}|http={resp.status_code}|tokens_left={left}|refill_rate={rate}|refill_in_ms={refill_in}")
     extra = {k: v for k, v in body.items() if k not in ("tokensLeft", "refillRate", "refillIn", "timestamp")}
     if extra and n == 0:
         print("KEEPA_OTHER|" + json.dumps(extra, default=str).replace(key, "***")[:300])
