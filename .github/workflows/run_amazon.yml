@@ -1,4 +1,5 @@
 name: Amazon Sync (Keepa)
+run-name: ${{ inputs.source == 'plan' && 'Amazon Sync (Keepa) · plan' || 'Amazon Sync (Keepa)' }}
 
 # The same pipeline as "Generate OnBuy Feed", pointed at the Amazon tab:
 # rows are fetched through Keepa instead of eBay (keepa_client.py), then
@@ -19,6 +20,14 @@ on:
         default: ""
       rows:
         description: "Only process these Amazon-tab rows, e.g. 2-20 or 5 or 2-10,30-40. Empty = normal run"
+        required: false
+        default: ""
+      max_products:
+        description: "Products this run may refresh (the Amazon dispatcher sets it from the plan; empty = the AMAZON_MAX_PRODUCTS_PER_RUN variable)"
+        required: false
+        default: ""
+      source:
+        description: "plan = launched by the Amazon dispatcher (it marks the run title); leave empty for a hand run"
         required: false
         default: ""
 
@@ -83,7 +92,7 @@ jobs:
           # Keepa costs 1 token per row (2,000 rows x 12 runs = 24,000 of the
           # Starter plan's 28,800 a day), so the batch is a plain cap here,
           # not the eBay budget maths.
-          MAX_PRODUCTS_PER_RUN: ${{ vars.AMAZON_MAX_PRODUCTS_PER_RUN || '300' }}
+          MAX_PRODUCTS_PER_RUN: ${{ inputs.max_products || vars.AMAZON_MAX_PRODUCTS_PER_RUN || '300' }}
           RUNS_PER_DAY: ${{ vars.RUNS_PER_DAY || '12' }}
           EBAY_DAILY_CALL_BUDGET: ${{ vars.EBAY_DAILY_CALL_BUDGET }}
           FEE_MODE: ${{ vars.FEE_MODE }}
