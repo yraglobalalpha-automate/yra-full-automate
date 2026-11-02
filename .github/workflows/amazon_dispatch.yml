@@ -6,6 +6,8 @@ name: Amazon Dispatcher (dynamic schedule)
 # last sync), not a clock: a dropped tick is caught up by the next. Costs no Keepa tokens, writes nothing.
 # AMAZON_DYNAMIC=0 (repo variable) = the old fixed cadence; the dashboard's Amazon page shows the plan.
 on:
+  schedule:
+    - cron: "13 * * * *"   # hourly: GitHub drops many scheduled ticks, so "due" is a state test and the next tick catches up
   workflow_dispatch:
     inputs:
       force:
