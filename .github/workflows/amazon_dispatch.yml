@@ -1,0 +1,55 @@
+name: Amazon Dispatcher (dynamic schedule)
+
+# Decides, from live facts, whether this account's Amazon sync is due and launches it with the batch size the plan wants (amazon_plan.py,
+# amazon_dispatch.py). The number of runs a day and the size of each follow the number of Amazon products and the Keepa budget: a small
+# tab runs often, a big one is cut into slices. GitHub delivers only part of its scheduled ticks, so "due" is a state test (time since the
+# last sync), not a clock: a dropped tick is caught up by the next. Costs no Keepa tokens, writes nothing.
+# AMAZON_DYNAMIC=0 (repo variable) = the old fixed cadence; the dashboard's Amazon page shows the plan.
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "yes = launch an Amazon sync now whatever the plan says (a running or waiting one still blocks it)"
+        required: false
+        default: "no"
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: amazon-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Plan and launch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
+          SHEET_NAME: "YRA_Full_Feed_Master"
+          SHEET_TAB: Amazon
+          FORCE: ${{ inputs.force }}
+          AMAZON_DYNAMIC: ${{ vars.AMAZON_DYNAMIC }}
+          KEEPA_KEY_STORES: ${{ vars.KEEPA_KEY_STORES }}
+          AMAZON_MAX_CYCLES_PER_DAY: ${{ vars.AMAZON_MAX_CYCLES_PER_DAY }}
+          AMAZON_RUN_SLICE_MAX: ${{ vars.AMAZON_RUN_SLICE_MAX }}
+          KEEPA_UTILIZATION_PERCENT: ${{ vars.KEEPA_UTILIZATION_PERCENT }}
+        run: python -u amazon_dispatch.py
