@@ -1,0 +1,24 @@
+name: Keepa Status (read-only, free)
+
+# Asks Keepa what it knows about the key this repository holds (tokens left, refill rate, refill clock). Costs no Keepa
+# tokens, touches no sheet and no OnBuy, so it stays outside the onbuy-api group. Used to tell which repositories share a key.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: Keepa status
+        env:
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
+        run: python -u keepa_status.py
