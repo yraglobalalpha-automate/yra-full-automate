@@ -3,7 +3,8 @@ name: Amazon Dispatcher (dynamic schedule)
 # Decides, from live facts, whether this account's Amazon sync is due and launches it with the batch size the plan wants (amazon_plan.py,
 # amazon_dispatch.py). The number of runs a day and the size of each follow the number of Amazon products and the Keepa budget: a small
 # tab runs often, a big one is cut into slices. GitHub delivers only part of its scheduled ticks, so "due" is a state test (time since the
-# last sync), not a clock: a dropped tick is caught up by the next. Costs no Keepa tokens, writes nothing.
+# last sync), not a clock: a dropped tick is caught up by the next (with a bigger batch). Two accounts share each Keepa key, so a tick waits while
+# its key-mate's Amazon sync is running (KEEPA_MATE_REPOS) - that wait is why the job may run for hours. Costs no Keepa tokens, writes nothing.
 # AMAZON_DYNAMIC=0 (repo variable) = the old fixed cadence; the dashboard's Amazon page shows the plan.
 on:
   schedule:
@@ -26,7 +27,7 @@ concurrency:
 jobs:
   dispatch:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 200
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -54,4 +55,7 @@ jobs:
           AMAZON_MAX_CYCLES_PER_DAY: ${{ vars.AMAZON_MAX_CYCLES_PER_DAY }}
           AMAZON_RUN_SLICE_MAX: ${{ vars.AMAZON_RUN_SLICE_MAX }}
           KEEPA_UTILIZATION_PERCENT: ${{ vars.KEEPA_UTILIZATION_PERCENT }}
+          KEEPA_MATE_REPOS: ${{ vars.KEEPA_MATE_REPOS }}
+          AMAZON_DISPATCH_DELAY_S: ${{ vars.AMAZON_DISPATCH_DELAY_S }}
+          AMAZON_KEY_WAIT_MIN: ${{ vars.AMAZON_KEY_WAIT_MIN }}
         run: python -u amazon_dispatch.py
