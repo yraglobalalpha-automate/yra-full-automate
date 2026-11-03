@@ -28,6 +28,8 @@ ALLOWED_RUNS = (1, 2, 3, 4, 6, 12)
 LEGACY_RUNS = 6                      # the cadence used when the plan cannot be computed (or AMAZON_DYNAMIC=0): every 4 hours
 TOLERANCE_H = 0.4                    # a tick up to 24 minutes before the interval ends still counts as due
 GHOST_H = 12.0                       # a run "in progress" or waiting longer than this is a GitHub ghost, not a sync
+FAIL_RETRY_H = 1.5                   # a FAILED last sync is retried after this long at the latest (its rows were left untouched)
+OVERDUE_FACTOR = 2.0                 # a store that waited this many intervals (+2 h) for a busy key-mate goes anyway
 PLANNED_MARK = "· plan"              # the dispatcher's runs carry this in their title (run-name in run_amazon.yml)
 WAITING = ("in_progress", "queued", "pending", "waiting", "requested")
 
@@ -85,8 +87,8 @@ def is_busy(runs, now):
 
 
 def last_planned(runs):
-    """created_at of the newest run that counts as 'the last sync': a scheduled run or one the dispatcher launched - a human's targeted
-    run must not move the clock, and a cancelled/skipped run did no work."""
+    """{'ts', 'conclusion'} of the newest run that counts as 'the last sync' (None when there is none): a scheduled run or one the dispatcher
+    launched - a human's targeted run must not move the clock, and a cancelled/skipped run did no work."""
     best = None
     for r in runs:
         if r.get("conclusion") in ("cancelled", "skipped"):
@@ -94,31 +96,65 @@ def last_planned(runs):
         planned = r.get("event") == "schedule" or PLANNED_MARK in str(r.get("display_title") or "")
         if planned and r.get("created_at"):
             ts = _ts(r["created_at"])
-            best = ts if best is None or ts > best else best
+            if best is None or ts > best["ts"]:
+                best = {"ts": ts, "conclusion": r.get("conclusion") or r.get("status") or ""}
     return best
 
 
-def decide(now, last_ts, busy, interval_h, force=False, tolerance_h=TOLERANCE_H):
-    """(due?, reason) - reasons are one-line plain text (no '|')."""
+def catch_up_slice(info, elapsed_h, slice_max=SLICE_MAX):
+    """Products for THIS run: the plan's slice, grown to cover the real time since the last sync when GitHub dropped ticks (the same idea as the
+    eBay sync's adaptive batch) - the day's budget is spent whatever the cadence, never more than one run may carry (slice_max) or the tab holds."""
+    size = int(info.get("slice") or 0)
+    interval = info.get("interval_h") or 0
+    if not size or elapsed_h is None or elapsed_h <= interval:
+        return size
+    wanted = math.ceil(info.get("daily", 0) * min(elapsed_h, 24.0) / 24.0)
+    return max(size, min(wanted, int(slice_max), int(info.get("n") or size)))
+
+
+def mate_running(mates, fetch, now):
+    """The first key-mate (owner/repo) whose Amazon sync is running or waiting - two accounts on one Keepa key must not draw at once (the second
+    run finds the bucket empty, waits for refills the first keeps taking, and can run out of retries). An unreadable mate never blocks."""
+    for mate in mates:
+        try:
+            runs = fetch(mate)
+        except Exception:                                           # noqa: BLE001 - a mate we cannot see is not a reason to stand still
+            continue
+        if is_busy(runs, now):
+            return mate
+    return None
+
+
+def overdue(now, last, interval_h):
+    """True when this account has gone so long without a sync that waiting for a busy key-mate any longer would be the bigger harm."""
+    return last is not None and (now - last["ts"]) / 3600.0 > OVERDUE_FACTOR * interval_h + 2.0
+
+
+def decide(now, last, busy, interval_h, force=False, tolerance_h=TOLERANCE_H):
+    """(due?, reason) - reasons are one-line plain text (no '|'). `last` = last_planned(...): a sync that FAILED is retried within FAIL_RETRY_H."""
     if busy:
         return False, "a sync is already running or waiting for the OnBuy slot"
     if force:
         return True, "forced by hand"
-    if last_ts is None:
+    if last is None:
         return True, "no earlier planned sync on record"
-    elapsed = (now - last_ts) / 3600.0
-    if elapsed >= interval_h - tolerance_h:
-        return True, f"{elapsed:.1f} h since the last sync, the plan wants one every {interval_h:g} h"
-    return False, f"{elapsed:.1f} h since the last sync, the next is due after {interval_h:g} h"
+    elapsed = (now - last["ts"]) / 3600.0
+    interval = min(interval_h, FAIL_RETRY_H) if last.get("conclusion") == "failure" else interval_h
+    note = " (the last one failed - retrying sooner)" if interval != interval_h else ""
+    if elapsed >= interval - tolerance_h:
+        return True, f"{elapsed:.1f} h since the last sync, the plan wants one every {interval:g} h{note}"
+    return False, f"{elapsed:.1f} h since the last sync, the next is due after {interval:g} h{note}"
 
 
-def line(info, due, reason, dispatched, elapsed_h=None, extra=""):
+def line(info, due, reason, dispatched, elapsed_h=None, extra="", slice_now=None, waited_min=None, mate=None):
     """The single structured log line the dashboard reads: AMAZON_PLAN|key=value|..."""
     parts = [("n", info.get("n")), ("runs", info.get("runs")), ("slice", info.get("slice")), ("cycles", info.get("cycles")),
              ("daily", info.get("daily")), ("tokens_day", info.get("tokens_day")), ("share", info.get("share")),
              ("key_tokens_day", info.get("key_tokens_day")), ("stores_on_key", info.get("stores_on_key")),
              ("interval_h", info.get("interval_h")), ("limited_by", info.get("limited_by")),
              ("elapsed_h", None if elapsed_h is None else round(elapsed_h, 1)),
+             ("slice_now", slice_now if slice_now and slice_now != info.get("slice") else None),
+             ("waited_min", waited_min or None), ("mate", mate),
              ("due", "yes" if due else "no"), ("dispatched", "yes" if dispatched else "no"),
              ("reason", str(reason).replace("|", "/")), ("note", extra.replace("|", "/") if extra else None)]
     return "AMAZON_PLAN|" + "|".join(f"{k}={v}" for k, v in parts if v is not None)
