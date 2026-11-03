@@ -1,8 +1,15 @@
 """The Amazon dispatcher (2026-11-02, user: "make it dynamic - the hourly Amazon runs of each account depend on the number of products
-added"). Runs every hour as its own tiny workflow and answers one question - is this account's Amazon sync due? - from live facts: the
+added"). Runs every hour as its own small workflow and answers one question - is this account's Amazon sync due? - from live facts: the
 number of Amazon products on the sheet, this key's Keepa budget (read from Keepa itself, so a plan upgrade is picked up by itself) and the
-time since the last planned sync. When it is due it launches run_amazon.yml with the batch size the plan wants (refresh_all=yes so the
-run refreshes filled rows like a scheduled one, max_products=<slice>); it never launches into a running or waiting sync.
+time since the last planned sync. When it is due it launches run_amazon.yml with the batch size the plan wants (refresh_all=yes so the run
+refreshes filled rows like a scheduled one, max_products=<slice>); it never launches into a running or waiting sync.
+
+Added 2026-11-03 after the first night's logs: (1) KEY-MATES - two accounts share each Keepa key, and when GitHub delivered both ticks within
+minutes they started together, fought over one bucket ("out of tokens") and YRA's run ran out of retries; the dispatcher now waits (up to
+AMAZON_KEY_WAIT_MIN, default 150) while a key-mate's Amazon sync is running - KEEPA_MATE_REPOS lists them, the repositories are public so
+their runs are readable - and AMAZON_DISPATCH_DELAY_S staggers the second account of a pair so it can see the first's launch; an account
+that has waited more than two intervals plus two hours goes anyway. (2) CATCH-UP - GitHub delivers only a fraction of scheduled ticks, so
+after a gap the batch grows to cover the real elapsed time (never beyond one run's cap). (3) A FAILED last sync is retried within 90 minutes.
 
 Safety: repo variable AMAZON_DYNAMIC=0 means the old fixed cadence (every 4 hours, the workflow's own batch variable); any trouble while
 planning (sheet or Keepa unreachable) falls back to that cadence for the tick - a bug here must never silence the syncs. One AMAZON_PLAN|
@@ -18,6 +25,7 @@ import amazon_plan
 
 API = "https://api.github.com"
 WORKFLOW = "run_amazon.yml"
+POLL_S = 180
 
 
 def env_num(name, default, cast=float):
@@ -88,9 +96,9 @@ def launch(repo, size):
 
 def main():
     repo = os.environ["GITHUB_REPOSITORY"]
-    now = time.time()
     force = (os.getenv("FORCE") or "").strip().lower() in ("yes", "1", "true")
     dynamic = (os.getenv("AMAZON_DYNAMIC") or "1").strip().lower() not in ("0", "no", "false", "off")
+    mates = [m.strip() for m in (os.getenv("KEEPA_MATE_REPOS") or "").replace(";", ",").split(",") if m.strip()]
 
     runs = recent_runs(repo)
     info, note = None, ""
@@ -113,15 +121,42 @@ def main():
     if info.get("runs") == 0:
         print(amazon_plan.line(info, False, "no Amazon products to sync yet", False, extra=note))
         return 0
+
+    now = time.time()
     last = amazon_plan.last_planned(runs)
     due, reason = amazon_plan.decide(now, last, amazon_plan.is_busy(runs, now), info["interval_h"], force=force)
-    elapsed = None if last is None else (now - last) / 3600.0
+
+    blocker, waited = None, 0
+    if due and not force and mates:
+        delay = env_num("AMAZON_DISPATCH_DELAY_S", 0, int)
+        if delay:
+            time.sleep(delay)                                       # the second account of a pair lets the first one's launch become visible
+        blocker = amazon_plan.mate_running(mates, recent_runs, time.time())
+        if blocker and not amazon_plan.overdue(time.time(), last, info["interval_h"]):
+            started, cap = time.time(), env_num("AMAZON_KEY_WAIT_MIN", 150, int) * 60
+            while blocker and time.time() - started < cap:
+                time.sleep(POLL_S)
+                blocker = amazon_plan.mate_running(mates, recent_runs, time.time())
+            waited = round((time.time() - started) / 60)
+            runs = recent_runs(repo)                                # the world moved while we waited: our own runs may have changed
+            now = time.time()
+            last = amazon_plan.last_planned(runs)
+            due, reason = amazon_plan.decide(now, last, amazon_plan.is_busy(runs, now), info["interval_h"])
+            if blocker and due:
+                due, reason = False, f"{reason} - but {blocker}'s sync kept the shared Keepa key busy for {waited} min"
+        elif blocker:
+            note = (note + "; " if note else "") + f"{blocker} is syncing on the same key, but this account is overdue - going anyway"
+            blocker = None
+
+    now = time.time()
+    elapsed = None if last is None else (now - last["ts"]) / 3600.0
+    size = amazon_plan.catch_up_slice(info, elapsed, env_num("AMAZON_RUN_SLICE_MAX", amazon_plan.SLICE_MAX, int)) if info.get("slice") else None
     launched = False
     if due:
-        launched, status = launch(repo, info.get("slice"))
+        launched, status = launch(repo, size)
         if not launched:
             reason = f"{reason} - but GitHub refused the launch (HTTP {status})"
-    print(amazon_plan.line(info, due, reason, launched, elapsed_h=elapsed, extra=note))
+    print(amazon_plan.line(info, due, reason, launched, elapsed_h=elapsed, extra=note, slice_now=size, waited_min=waited, mate=blocker))
     for w in info.get("warnings") or []:
         print(f"WARNING {w}")
     return 1 if due and not launched else 0
