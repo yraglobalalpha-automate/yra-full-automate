@@ -21,3 +21,6 @@
 # 2026-10-28 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
 # 2026-10-28 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
 166750194465  # Amazon row 455: row = EZVIZWiFiVideoDoorViewer,WirelessPeepholeCame | page = EZVIZ WiFi Video Door Viewer, Wireless Peepho
+# 2026-11-03 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+632060001576  # Amazon row 565: row = MYSTILUCKStarProjectorNightLight,MultipleLigh | page = MYSTILUCK Galaxy Star Projector Night Light,
+667843076441  # Amazon row 603: row = Karaoke Machine 2 Microphones, TWS, LED, Voca | page = Karaoke Machine 2 Microphones for Adults & Ki
