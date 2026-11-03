@@ -61,18 +61,54 @@ def test_the_last_planned_run_ignores_a_humans_targeted_run_and_cancelled_ones()
             {"status": "completed", "conclusion": "cancelled", "event": "schedule", "display_title": "Amazon Sync (Keepa)", "created_at": iso(1.0)},
             {"status": "completed", "conclusion": "success", "event": "workflow_dispatch", "display_title": "Amazon Sync (Keepa) · plan", "created_at": iso(3.0)},
             {"status": "completed", "conclusion": "success", "event": "schedule", "display_title": "Amazon Sync (Keepa)", "created_at": iso(9.0)}]
-    assert round((NOW - ap.last_planned(runs)) / 3600, 1) == 3.0                       # the dispatcher's own run, not the hand run 0.5 h ago
+    assert round((NOW - ap.last_planned(runs)["ts"]) / 3600, 1) == 3.0                 # the dispatcher's own run, not the hand run 0.5 h ago
     assert ap.last_planned([runs[0], runs[1]]) is None
 
 
+def last(hours_ago, conclusion="success"):
+    return {"ts": NOW - hours_ago * 3600, "conclusion": conclusion}
+
+
 def test_due_when_the_interval_has_passed_and_never_into_a_busy_slot():
-    assert ap.decide(NOW, NOW - 4.1 * 3600, False, 4.0)[0]
-    assert ap.decide(NOW, NOW - 3.7 * 3600, False, 4.0)[0]                              # inside the 24-minute tolerance
-    assert not ap.decide(NOW, NOW - 3.0 * 3600, False, 4.0)[0]
+    assert ap.decide(NOW, last(4.1), False, 4.0)[0]
+    assert ap.decide(NOW, last(3.7), False, 4.0)[0]                                      # inside the 24-minute tolerance
+    assert not ap.decide(NOW, last(3.0), False, 4.0)[0]
     assert ap.decide(NOW, None, False, 4.0) == (True, "no earlier planned sync on record")
-    assert ap.decide(NOW, NOW - 9 * 3600, True, 4.0)[0] is False                        # busy beats overdue
-    assert ap.decide(NOW, NOW - 0.1 * 3600, False, 4.0, force=True)[0]                  # force skips the interval only
-    assert ap.decide(NOW, NOW - 9 * 3600, True, 4.0, force=True)[0] is False
+    assert ap.decide(NOW, last(9), True, 4.0)[0] is False                                # busy beats overdue
+    assert ap.decide(NOW, last(0.1), False, 4.0, force=True)[0]                          # force skips the interval only
+    assert ap.decide(NOW, last(9), True, 4.0, force=True)[0] is False
+
+
+def test_a_failed_last_sync_is_retried_within_ninety_minutes_not_after_a_whole_interval():
+    assert ap.decide(NOW, last(1.2, "failure"), False, 8.0)[0]                           # YRA's 22:47 run failed: its rows were left untouched
+    assert "retrying sooner" in ap.decide(NOW, last(1.2, "failure"), False, 8.0)[1]
+    assert not ap.decide(NOW, last(0.5, "failure"), False, 8.0)[0]                       # ... but not at once, a broken key must not be hammered
+    assert not ap.decide(NOW, last(1.2, "success"), False, 8.0)[0]                       # a good run keeps its full interval
+
+
+def test_a_batch_grows_to_cover_the_ticks_github_dropped_and_stays_inside_the_caps():
+    gtv = ap.plan(5220)                                                                   # plan: 1,632 every 4 h
+    assert ap.catch_up_slice(gtv, 3.0) == 1632 and ap.catch_up_slice(gtv, None) == 1632   # on time: the plan's slice
+    assert ap.catch_up_slice(gtv, 6.5) == 2275                                            # 6.5 h gap (11-02): 2,653 wanted, one run carries 2,275
+    assert ap.catch_up_slice(gtv, 100) == 2275
+    kidoomi = ap.plan(525)
+    assert ap.catch_up_slice(kidoomi, 5.0) == 525                                         # never more than the tab holds
+    assert ap.catch_up_slice(ap.plan(0), 5.0) == 0
+
+
+def test_a_busy_key_mate_blocks_and_an_unreadable_one_does_not():
+    def fetch(repo):
+        if repo == "org/unreadable":
+            raise RuntimeError("404")
+        return [{"status": "in_progress", "created_at": iso(0.5)}] if repo == "org/busy" else [{"status": "completed", "created_at": iso(0.5)}]
+    assert ap.mate_running(["org/unreadable", "org/idle", "org/busy"], fetch, NOW) == "org/busy"
+    assert ap.mate_running(["org/unreadable", "org/idle"], fetch, NOW) is None
+    assert ap.mate_running([], fetch, NOW) is None
+
+
+def test_an_account_that_has_waited_far_too_long_goes_anyway():
+    assert ap.overdue(NOW, last(11), 4.0) and not ap.overdue(NOW, last(9), 4.0)         # 2 intervals + 2 h = 10 h for a 4 h plan
+    assert not ap.overdue(NOW, None, 4.0)
 
 
 def test_the_log_line_is_one_pipe_separated_record_without_stray_pipes():
