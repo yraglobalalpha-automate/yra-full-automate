@@ -28,6 +28,7 @@ import keepa_client
 import keepa_cache
 import sku_aliases
 import link_owners
+import brand_denylist
 from retry_utils import AuthError, PermanentError, RateLimitError, TransientError, raise_for_status, with_retry
 from sanitize import sanitize_description, validate_images, strip_emojis
 
@@ -1776,6 +1777,7 @@ def main():
     onbuy_failed = 0
     onbuy_removed = 0
     onbuy_brand_blocked = 0  # brand owned by another seller - flagged, kept (2026-08-03)
+    brand_denied_rows = 0  # brand on the store's own denylist (brand_denylist.txt) - flagged, never pushed (2026-11-04)
     onbuy_deferred = 0  # created earlier, listing not yet updatable on OnBuy's side
     onbuy_suspended_locked = 0  # listing suspended on OnBuy - edits rejected until reactivation
     onbuy_no_price = 0  # already-created rows with no usable price - push skipped (never send price 0)
@@ -2495,6 +2497,13 @@ def main():
                     amazon_flag = (f"Failed: supplier link already used on row {_fr} ({_ft}) "
                                    "- one listing per supplier product")
                     logger.warning("Row %d (SKU %s): %s", i, sku, amazon_flag)
+        # Store policy (user order 2026-11-04): some brands are never listed here (brand_denylist.txt - Hisense, Homcom). Such a row is
+        # frozen like the duplicate-product rows above - its Sync Status says why, nothing is created or pushed - and its Stock is forced
+        # to 0, so the sheet shows it inactive and a listing that somehow exists is zeroed by the frozen-row pass further down.
+        amazon_flag, stock, _denied_brand = brand_denylist.guard(brand, title, amazon_flag, stock)
+        if _denied_brand:
+            brand_denied_rows += 1
+            logger.warning("Row %d (SKU %s): %s", i, sku, amazon_flag)
         # The categoriser reads text; Amazon's category tree is the best
         # hint it can get, so it rides along with the description here only.
         category_text = description if supplier != "Amazon" else f"{description} {ebay_data.get('category_path') or ''}"
@@ -3314,6 +3323,9 @@ def main():
             if not all([sku, title, category]):
                 skipped_feed += 1
                 continue
+            if brand_denylist.blocked_name(brand, title):        # the catalogue mirror never carries a blocked brand
+                skipped_feed += 1
+                continue
 
             product = ET.SubElement(root, "product")
             ET.SubElement(product, "sku").text = sku
@@ -3393,6 +3405,8 @@ def main():
                  onbuy_protected, onbuy_create_paused)
     if onbuy_halt_reason:
         logger.warning("OnBuy pushes were halted early this run: %s", onbuy_halt_reason)
+    if brand_denied_rows:
+        logger.info("Blocked brands (brand_denylist.txt): %d row(s) kept off OnBuy this run", brand_denied_rows)
     logger.info("Feed products: %d, skipped: %d", feed_count, skipped_feed)
     logger.info("Feed URL: %s", feed_url or "(not uploaded - see SUPABASE_URL/SUPABASE_SERVICE_KEY)")
     logger.info("Supabase database export: %s (%d rows)", "OK" if supabase_ok else "skipped/failed", len(supabase_rows))

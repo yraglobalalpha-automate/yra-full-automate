@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       brands:
-        description: "Brand names, pipe separated, case-insensitive"
+        description: "Brand names separated by | (empty = the store's blocklist, brand_denylist.txt)"
         required: false
-        default: "Hisense|Homcom"
+        default: ""
       show:
         description: "Max rows to print per group"
         required: false

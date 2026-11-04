@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+import brand_denylist
 from onbuy_client import OnBuyClient
 from retry_utils import with_retry
 
@@ -163,7 +164,7 @@ def read_sources(book):
                 stock = int(float(str(row.get("Stock") or "0") or 0))
             except ValueError:
                 stock = 0
-            out[sku] = {"source": tab_name, "title": str(row.get("Title") or "").strip(),
+            out[sku] = {"source": tab_name, "title": str(row.get("Title") or "").strip(), "brand": str(row.get("Brand") or "").strip(),
                         "opc": str(row.get("OPC") or "").strip().upper(), "gbp": gbp, "stock": stock}
     print(f"source tabs: {len(out)} distinct SKU(s) read")
     return out
@@ -230,7 +231,7 @@ def mode_populate(book):
     held = held_skus()
     tab, header, records = germany_rows(book)
     already = {str(r.get("SKU") or "").strip() for r in records if str(r.get("SKU") or "").strip()}
-    rows, skipped = [], {"no OPC": 0, "no price": 0, "out of stock": 0, "on hold lists": 0, "already on the tab": 0}
+    rows, skipped = [], {"no OPC": 0, "no price": 0, "out of stock": 0, "on hold lists": 0, "blocked brand": 0, "already on the tab": 0}
     for sku, s in sources.items():
         if ONLY_SKUS and sku not in ONLY_SKUS:
             continue
@@ -248,6 +249,9 @@ def mode_populate(book):
             continue
         if (sku.lstrip("0") or sku) in held:
             skipped["on hold lists"] += 1
+            continue
+        if brand_denylist.blocked_name(s["brand"], s["title"]):      # store policy 2026-11-04: Hisense, Homcom (brand_denylist.txt) are never listed
+            skipped["blocked brand"] += 1
             continue
         rows.append([sku, s["source"], s["title"][:160], s["opc"], s["gbp"], eur_price(s["gbp"], rate, uplift), s["stock"], "", "", "", ""])
     print(f"populate | eligible to add: {len(rows)} | skipped: " + ", ".join(f"{k} {v}" for k, v in skipped.items() if v))

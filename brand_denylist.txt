@@ -1,0 +1,9 @@
+# Brands this store never lists (read by brand_denylist.py; the sync, the Germany populate and the catalogue mirror obey it).
+# One brand per line. Put other spellings of the SAME brand on the same line, separated by | . Lines starting with # are notes.
+# The repository variable BLOCKED_BRANDS (e.g. "Hisense, Homcom") replaces this file while it is set.
+# A row with such a brand is not created or updated on OnBuy: its Sync Status says "Blocked brand: ...", its Stock is forced to 0.
+#
+# 2026-11-04 (user order): every Hisense and Homcom product out of YRA, and never listed again. 113 SKUs were removed that day
+# (backup tab "Removed 2026-11-04").
+Hisense
+Homcom
