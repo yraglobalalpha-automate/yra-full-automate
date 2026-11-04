@@ -1,0 +1,45 @@
+name: Brand Rows Scan (read-only)
+
+# Which rows of Sheet1 / Amazon / Germany belong to the given brands? Reads the sheet only, prints no cost cell and no supplier link,
+# writes brand_skus.txt + brand_rows.csv as an artifact. Touches neither OnBuy nor the sheet.
+
+on:
+  workflow_dispatch:
+    inputs:
+      brands:
+        description: "Brand names, pipe separated, case-insensitive"
+        required: false
+        default: "Hisense|Homcom"
+      show:
+        description: "Max rows to print per group"
+        required: false
+        default: "400"
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Scan
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          BRANDS: ${{ inputs.brands }}
+          SHOW: ${{ inputs.show }}
+        run: python brand_rows_scan.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: brand_rows
+          path: |
+            brand_skus.txt
+            brand_rows.csv
