@@ -22,3 +22,5 @@
 # 2026-11-03 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
 632060001576  # Amazon row 565: row = MYSTILUCKStarProjectorNightLight,MultipleLigh | page = MYSTILUCK Galaxy Star Projector Night Light,
 667843076441  # Amazon row 603: row = Karaoke Machine 2 Microphones, TWS, LED, Voca | page = Karaoke Machine 2 Microphones for Adults & Ki
+# 2026-11-04 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+5051222490693-zzz  # Amazon row 2272: row = Dupray Plus Neat Steam Cleaner Non-Stop & Ref | page = Dupray Neat Plus Steam Cleaner with 17-Piece
