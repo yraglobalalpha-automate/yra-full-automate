@@ -26,3 +26,6 @@
 667843076441  # Amazon row 603: row = Karaoke Machine 2 Microphones, TWS, LED, Voca | page = Karaoke Machine 2 Microphones for Adults & Ki
 # 2026-11-04 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
 5051222490693-zzz  # Amazon row 2272: row = Dupray Plus Neat Steam Cleaner Non-Stop & Ref | page = Dupray Neat Plus Steam Cleaner with 17-Piece
+# 2026-11-05 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+# 2026-11-05 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+440338496289  # Amazon row 2440: row = Amazon Kindle 16 GB (2024 model) - Light and | page = Amazon Kindle (newest gen) – Lightest and mos
