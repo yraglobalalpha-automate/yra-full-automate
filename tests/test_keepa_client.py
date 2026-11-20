@@ -229,3 +229,38 @@ def test_a_buy_box_offer_is_left_alone(usual):
     p = _product(availabilityAmazon=-1, stats=stats)
     price, _seller, _availability, reason = kc.choose_offer(p, use_buybox=True)
     assert reason == "buybox" and kc.regular_price(p, price, reason) == price == 2000
+
+
+# ----- Temp Out of Stock / Delivery Time columns (availability_extras) -----
+
+def test_availability_extras_in_stock():
+    assert kc.availability_extras(_product(availabilityAmazon=0)) == ("NO", "In stock")
+
+
+def test_availability_extras_delayed_with_delay_hours():
+    # availabilityAmazonDelay is documented in HOURS: [24, 48] = ships in 1-2 days.
+    p = _product(availabilityAmazon=4, availabilityAmazonDelay=[24, 48])
+    assert kc.availability_extras(p) == ("YES", "1-2 days")
+    # [732, 1464] = Keepa's own "1 to 2 months" example -> 30-61 days.
+    p = _product(availabilityAmazon=4, availabilityAmazonDelay=[732, 1464])
+    assert kc.availability_extras(p) == ("YES", "30-61 days")
+
+
+def test_availability_extras_delayed_without_estimate():
+    assert kc.availability_extras(_product(availabilityAmazon=4)) == ("YES", "Delayed, no estimate")
+    # A null/garbage delay never crashes and falls back to the availability text.
+    p = _product(availabilityAmazon=4, availabilityAmazonDelay=[None, "x"])
+    assert kc.availability_extras(p) == ("YES", "Delayed, no estimate")
+
+
+def test_availability_extras_backorder_preorder_none():
+    assert kc.availability_extras(_product(availabilityAmazon=3)) == ("YES", "Back-order, no date")
+    assert kc.availability_extras(_product(availabilityAmazon=1)) == ("Pre-order", "Pre-order")
+    assert kc.availability_extras(_product(availabilityAmazon=-1)) == ("", "")
+    assert kc.availability_extras(_product(availabilityAmazon=None)) == ("", "")
+
+
+def test_normalize_product_carries_the_two_columns():
+    available, data = kc.normalize_product(_product(availabilityAmazon=4, availabilityAmazonDelay=[0, 288]))
+    assert data["amazon_temp_oos"] == "YES"
+    assert data["amazon_delivery"] == "0-12 days"

@@ -14,7 +14,8 @@ from retry_utils import with_retry
 SHEET_NAME = "YRA_Full_Feed_Master"
 TAB = (os.getenv("SHEET_TAB") or "Amazon").strip()
 
-AMAZON_EXTRA = ["ASIN", "Amazon Seller", "Amazon Availability", "Keepa Updated"]
+AMAZON_EXTRA = ["ASIN", "Amazon Seller", "Amazon Availability", "Keepa Updated",
+                "Temp Out of Stock", "Delivery Time"]
 # What generate_xml.py writes unconditionally (KeyError without them).
 REQUIRED = ["SKU", "Supplier URL", "Title", "Status", "Last Checked Time", "Cost Price (£)",
             "Stock", "Selling Price (£)", "Description", "Image URL", "Additional Images",

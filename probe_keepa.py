@@ -28,7 +28,8 @@ REQUIRED = ["SKU", "Supplier URL", "Title", "Status", "Last Checked Time", "Cost
 OPTIONAL = ["Category ID", "Price Check Flag", "Condition", "EAN", "Sync Status", "OPC",
             "OnBuy Product Created", "OnBuy Listing Active", "OnBuy Product ID",
             "Last OnBuy Sync", "Product URL", "Shipping Cost (£)", "Listing ID"]
-AMAZON_EXTRA = ["ASIN", "Amazon Seller", "Amazon Availability", "Keepa Updated"]
+AMAZON_EXTRA = ["ASIN", "Amazon Seller", "Amazon Availability", "Keepa Updated",
+                "Temp Out of Stock", "Delivery Time"]
 
 
 def row_selector(spec):

@@ -130,6 +130,30 @@ AVAILABILITY_TEXT = {
     4: "Delayed",
 }
 
+# 2026-11-20 (user: "the temporary out of stock and delivery time in a separate column"). Two informational sheet columns,
+# written on every visit, no pricing/stock behaviour change. Keepa reports availability for Amazon's OWN offer only:
+# "Temp Out of Stock" = YES when that offer is orderable but not shippable now (3 back-order, 4 dispatch delayed - Amazon's
+# "temporarily out of stock" page), NO when in stock, Pre-order/Unknown as such, blank when Amazon has no offer.
+# "Delivery Time" = availabilityAmazonDelay's [min, max] dispatch delay, documented in HOURS, shown in days.
+def availability_extras(product):
+    """(temp_oos, delivery) texts for the Amazon tab's extra columns."""
+    avail = product.get("availabilityAmazon")
+    avail = avail if isinstance(avail, int) else -1
+    temp_oos = {0: "NO", 1: "Pre-order", 2: "Unknown", 3: "YES", 4: "YES"}.get(avail, "")
+    delivery = ""
+    delay = product.get("availabilityAmazonDelay")
+    if isinstance(delay, (list, tuple)) and len(delay) == 2:
+        try:
+            lo, hi = int(delay[0]), int(delay[1])
+        except (TypeError, ValueError):
+            lo, hi = -1, -1
+        if 0 <= lo <= hi and hi > 0:
+            delivery = f"{lo // 24}-{math.ceil(hi / 24)} days"
+    if not delivery:
+        delivery = {0: "In stock", 1: "Pre-order", 3: "Back-order, no date", 4: "Delayed, no estimate"}.get(avail, "")
+    return temp_oos, delivery
+
+
 _ASIN_IN_URL_RE = re.compile(r"/(?:dp|gp/product|gp/aw/d|product)/([A-Z0-9]{10})(?=[/?#]|$)", re.I)
 _BARE_ASIN_RE = re.compile(r"^[A-Z0-9]{10}$", re.I)
 
@@ -172,6 +196,8 @@ def empty_amazon_response(asin=""):
         "asin": asin,
         "amazon_seller": "",
         "amazon_availability": "",
+        "amazon_temp_oos": "",
+        "amazon_delivery": "",
         "keepa_updated": "",
         "eans": [],
         "category_path": "",
@@ -365,9 +391,12 @@ def normalize_product(product, asin="", use_buybox=None):
         REAL_PRICE_USED += 1
     data = empty_amazon_response(asin)
     names = _category_names(product)
+    temp_oos, delivery = availability_extras(product)
     data.update({
         "amazon_seller": seller,
         "amazon_availability": availability,
+        "amazon_temp_oos": temp_oos,
+        "amazon_delivery": delivery,
         "keepa_updated": keepa_time_to_iso(product.get("lastUpdate")),
         "eans": barcodes(product),
         "category_path": " > ".join(names),

@@ -3043,7 +3043,8 @@ def main():
             row_updates.append({"range": f"{col_letter(col_map['EAN'])}{i}", "values": [[ean]]})
         if supplier == "Amazon":
             for _col, _key in (("ASIN", "asin"), ("Amazon Seller", "amazon_seller"),
-                               ("Amazon Availability", "amazon_availability"), ("Keepa Updated", "keepa_updated")):
+                               ("Amazon Availability", "amazon_availability"), ("Keepa Updated", "keepa_updated"),
+                               ("Temp Out of Stock", "amazon_temp_oos"), ("Delivery Time", "amazon_delivery")):
                 if _col in col_map:
                     row_updates.append({"range": f"{col_letter(col_map[_col])}{i}",
                                         "values": [[str(ebay_data.get(_key) or "")]]})
