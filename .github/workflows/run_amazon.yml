@@ -64,6 +64,7 @@ jobs:
           KEEPA_BUYBOX: ${{ vars.KEEPA_BUYBOX }}
           AMAZON_OWN_OFFER_ONLY: ${{ vars.AMAZON_OWN_OFFER_ONLY }}
           KEEPA_REGULAR_PRICE: ${{ vars.KEEPA_REGULAR_PRICE }}
+          KEEPA_DEAL_PRICE_UNTIL: ${{ vars.KEEPA_DEAL_PRICE_UNTIL }}
           KEEPA_DROP_HOLD_PERCENT: ${{ vars.KEEPA_DROP_HOLD_PERCENT }}
           KEEPA_REAL_PRICE_LOOKUP: ${{ vars.KEEPA_REAL_PRICE_LOOKUP }}
           KEEPA_REAL_PRICE_MAX: ${{ vars.KEEPA_REAL_PRICE_MAX }}
@@ -95,7 +96,9 @@ jobs:
           RUNS_PER_DAY: ${{ vars.RUNS_PER_DAY || '12' }}
           EBAY_DAILY_CALL_BUDGET: ${{ vars.EBAY_DAILY_CALL_BUDGET }}
           FEE_MODE: ${{ vars.FEE_MODE }}
-          PROFIT_SCHEDULE: ${{ vars.PROFIT_SCHEDULE }}
+          # The Amazon tab prices under its own schedule when PROFIT_SCHEDULE_AMAZON is set
+          # (user 2026-11-20: YRA Amazon 15% / Ardwick Amazon 17%); the eBay sync keeps vars.PROFIT_SCHEDULE.
+          PROFIT_SCHEDULE: ${{ vars.PROFIT_SCHEDULE_AMAZON || vars.PROFIT_SCHEDULE }}
           FEE_TIER_MODE: ${{ vars.FEE_TIER_MODE }}
           # eBay's delivery fee in the cost base and the Shipping Cost (£) cell (user 2026-10-02): '1' = on, 'shadow' =
           # measure and log only (nothing written or repriced), '0' = off. A repo variable of the same name overrides.

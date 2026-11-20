@@ -20,7 +20,7 @@ import math
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import requests
 
@@ -71,6 +71,28 @@ try:
 except ValueError:
     REGULAR_MAX_UPLIFT_PERCENT = 35.0
 REGULAR_LIFTED = 0          # prices lifted from a discount to the usual level in this process (the sync prints it at the end)
+
+# 2026-11-20 (user: Amazon runs Black Friday deals until 30 Nov; "make it pick the black friday sale price"): until
+# KEEPA_DEAL_PRICE_UNTIL (a date YYYY-MM-DD, INCLUSIVE, UTC) the usual-price rule above is SUSPENDED and the cost
+# basis is the offer's CURRENT price, deals included. After the date the rule is back by itself - no revert needed.
+# Empty = off. The drop guard below stays on throughout, so an error price under DROP_HOLD_PERCENT % of the usual
+# level is still refused (a Black Friday deal deeper than 60% off would be held too - raise the guard if one is).
+_DEAL_PRICE_UNTIL = (os.getenv("KEEPA_DEAL_PRICE_UNTIL") or "").strip()
+
+
+def _deal_window_open():
+    if not _DEAL_PRICE_UNTIL:
+        return False
+    try:
+        return datetime.now(timezone.utc).date() <= date.fromisoformat(_DEAL_PRICE_UNTIL)
+    except ValueError:
+        logger.warning("KEEPA_DEAL_PRICE_UNTIL %r is not a date (YYYY-MM-DD) - ignored", _DEAL_PRICE_UNTIL)
+        return False
+
+
+DEAL_WINDOW = _deal_window_open()
+if DEAL_WINDOW:
+    logger.info("DEAL WINDOW until %s: cost basis is the current (deal) price; the usual-price lift is suspended", _DEAL_PRICE_UNTIL)
 
 # 2026-10-27 (Arden 0000069168437 -Messam, ASIN B0FB2L7CCX: an order at GBP 19.73 for a product that normally sells at about GBP 40). Keepa showed
 # Amazon's OWN offer at about a third of the usual price with availabilityAmazon 4 ("Delayed"): not buyable, so the Amazon branch of choose_offer
@@ -281,7 +303,7 @@ def regular_price(product, price, reason):
     capped at +REGULAR_MAX_UPLIFT_PERCENT of the current price. `price` unchanged when the rule is off, the offer is not Amazon's own
     or the lowest New one (a Buy Box price is left alone), or Keepa has no average for it."""
     global REGULAR_LIFTED
-    if not REGULAR_PRICE or price <= 0 or reason not in ("amazon", "new"):
+    if not REGULAR_PRICE or DEAL_WINDOW or price <= 0 or reason not in ("amazon", "new"):
         return price
     stats = product.get("stats") or {}
     idx = IDX_AMAZON if reason == "amazon" else IDX_NEW
