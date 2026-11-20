@@ -100,7 +100,8 @@ def main():
         if not asin:
             continue
         available, d = keepa_client.get_amazon_data(asin, products)
-        print(f"    available: {available} | seller: {d['amazon_seller'] or '-'} | availability: {d['amazon_availability']}")
+        print(f"    available: {available} | seller: {d['amazon_seller'] or '-'} | availability: {d['amazon_availability']}"
+              f" | temp OOS: {d['amazon_temp_oos'] or '-'} | delivery: {d['amazon_delivery'] or '-'}")
         if available:
             print(f"    cost £{d['price']:.2f} -> stock {d['stock']} | brand: {d['brand'] or '-'} | title: {d['title'][:80]}")
             print(f"    images: {1 if d['main_image'] else 0} + {len(d['additional_images'])} | description {len(d['description'])} chars")
