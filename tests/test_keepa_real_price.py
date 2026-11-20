@@ -16,7 +16,9 @@ def arr(amazon=-1, new=-1):
 def phantom(asin="B0PHANTOM01", **stats_over):
     stats = {"current": arr(999, 999), "avg30": arr(999, 3168), "avg90": arr(999, 3276)}
     stats.update(stats_over)
-    return {"asin": asin, "productType": 0, "availabilityAmazon": 4, "stats": stats}
+    # avail 2 ("unknown"): since 2026-11-20 avail 3/4 are held outright by the temp-OOS rule and never
+    # reach the real-price lookup; 2 still walks the amazon-unbuyable -> Buy Box rescue path.
+    return {"asin": asin, "productType": 0, "availabilityAmazon": 2, "stats": stats}
 
 
 BUY_BOX = dict(buyBoxPrice=3999, buyBoxShipping=0, buyBoxIsShippable=True, buyBoxIsAmazon=False, buyBoxIsFBA=True, buyBoxIsUsed=False, buyBoxIsWarehouseDeal=False, buyBoxIsPreorder=False,
@@ -112,7 +114,7 @@ def test_a_buy_box_that_is_itself_an_error_price_is_still_held(keepa):
 def test_a_buy_box_that_cannot_be_bought_leaves_the_row_held(keepa, bad):
     client, _fake = keepa({"B0PHANTOM01": phantom()}, {"B0PHANTOM01": phantom(**dict(BUY_BOX, **bad))})
     available, data = kc.normalize_product(run(client, ["B0PHANTOM01"])["B0PHANTOM01"])
-    assert available is False and data["amazon_availability"] == "Delayed (Amazon's own offer only)"
+    assert available is False and data["amazon_availability"] == "Unknown (Amazon's own offer only)"
 
 
 def test_a_failed_second_request_keeps_the_first_answers_and_never_raises(keepa):

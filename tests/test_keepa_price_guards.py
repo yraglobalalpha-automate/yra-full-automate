@@ -21,28 +21,44 @@ def product(amazon=-1, new=-1, avail=-1, avg30=None, avg90=None, fba=-1, fbm=-1)
 
 
 def test_the_asin_that_took_the_order_is_unavailable_not_a_third_party_source():
+    # 2026-11-20: avail 4 is now held by the temp-OOS rule even earlier than the unbuyable guard.
     p = product(amazon=998, new=998, avail=4, avg30=arr(amazon=998, new=3170), avg90=arr(amazon=998, new=3280))
     price, seller, availability, reason = kc.choose_offer(p, use_buybox=False, own_only=False)
-    assert price == -1 and seller == "" and reason == "amazon-unbuyable" and availability == "Delayed (Amazon's own offer only)"
+    assert price == -1 and seller == "" and reason == "amazon-temp-oos" and availability == "Delayed (Amazon temp out of stock - held at 0)"
     available, data = kc.normalize_product(p)
-    assert available is False and data["amazon_availability"] == "Delayed (Amazon's own offer only)" and data["stock"] == 0
+    assert available is False and data["amazon_availability"].startswith("Delayed (Amazon temp out of stock") and data["stock"] == 0
 
 
 def test_every_amazon_status_that_is_not_in_stock_is_treated_the_same():
-    for avail in (1, 2, 3, 4, -1):
+    for avail in (1, 2, -1):
         p = product(amazon=998, new=998, avail=avail)
         assert kc.choose_offer(p, use_buybox=False, own_only=False)[3] == "amazon-unbuyable", avail
+    for avail in (3, 4):    # back-order / delayed = the Temp Out of Stock states, held harder since 2026-11-20
+        p = product(amazon=998, new=998, avail=avail)
+        assert kc.choose_offer(p, use_buybox=False, own_only=False)[3] == "amazon-temp-oos", avail
 
 
-def test_a_third_party_cheaper_than_amazons_unbuyable_offer_is_still_a_source():
+def test_temp_oos_holds_even_against_a_live_third_party_offer():
+    # 2026-11-20 (user): Amazon's own offer back-ordered/delayed -> out of stock on OnBuy, whatever third parties do.
+    for avail in (3, 4):
+        p = product(amazon=2000, new=1500, avail=avail, fba=1500)
+        price, seller, availability, reason = kc.choose_offer(p, use_buybox=False, own_only=False)
+        assert price == -1 and reason == "amazon-temp-oos"
+        available, data = kc.normalize_product(p)
+        assert available is False and data["stock"] == 0 and data["amazon_temp_oos"] == "YES"
+
+
+def test_temp_oos_hold_off_switch_restores_the_old_rule(monkeypatch):
+    monkeypatch.setattr(kc, "TEMP_OOS_HOLD", False)
     p = product(amazon=2000, new=1500, avail=4)
     assert kc.choose_offer(p, use_buybox=False, own_only=False) == (1500, "3rd party (lowest New)", "In stock (3rd party)", "new")
 
 
 def test_a_third_party_price_type_is_used_when_the_lowest_new_is_amazons_own_offer():
-    assert kc.choose_offer(product(amazon=998, new=998, avail=4, fba=2500), use_buybox=False, own_only=False)[:2] == (2500, "3rd party (lowest New)")
-    assert kc.choose_offer(product(amazon=998, new=998, avail=4, fba=2500, fbm=2300), use_buybox=False, own_only=False)[0] == 2300     # shipping included
-    assert kc.choose_offer(product(amazon=998, new=998, avail=4, fbm=2300), use_buybox=False, own_only=True)[3] == "third-party-only"
+    # avail 2 ("unknown") keeps exercising the unbuyable guard now that 3/4 are held earlier.
+    assert kc.choose_offer(product(amazon=998, new=998, avail=2, fba=2500), use_buybox=False, own_only=False)[:2] == (2500, "3rd party (lowest New)")
+    assert kc.choose_offer(product(amazon=998, new=998, avail=2, fba=2500, fbm=2300), use_buybox=False, own_only=False)[0] == 2300     # shipping included
+    assert kc.choose_offer(product(amazon=998, new=998, avail=2, fbm=2300), use_buybox=False, own_only=True)[3] == "third-party-only"
 
 
 def test_amazon_in_stock_and_plain_third_party_rows_are_untouched():

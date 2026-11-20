@@ -63,6 +63,7 @@ jobs:
           KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
           KEEPA_BUYBOX: ${{ vars.KEEPA_BUYBOX }}
           AMAZON_OWN_OFFER_ONLY: ${{ vars.AMAZON_OWN_OFFER_ONLY }}
+          AMAZON_TEMP_OOS_HOLD: ${{ vars.AMAZON_TEMP_OOS_HOLD }}   # 0 = let a third-party offer keep a temp-OOS row live (default on)
           KEEPA_REGULAR_PRICE: ${{ vars.KEEPA_REGULAR_PRICE }}
           KEEPA_DEAL_PRICE_UNTIL: ${{ vars.KEEPA_DEAL_PRICE_UNTIL }}
           KEEPA_DROP_HOLD_PERCENT: ${{ vars.KEEPA_DROP_HOLD_PERCENT }}

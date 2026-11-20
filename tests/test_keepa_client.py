@@ -75,7 +75,7 @@ def test_nothing_buyable_reports_amazon_availability():
     p = _product(availabilityAmazon=-1, stats={"current": [-1, -1]})
     assert kc.choose_offer(p, use_buybox=False)[2] == "No Amazon offer"
     p = _product(availabilityAmazon=3, stats={"current": [-1, -1]})
-    assert kc.choose_offer(p, use_buybox=False)[2] == "Back-order"
+    assert kc.choose_offer(p, use_buybox=False)[2] == "Back-order (Amazon temp out of stock - held at 0)"
 
 
 def test_dead_asin_and_odd_product_types():

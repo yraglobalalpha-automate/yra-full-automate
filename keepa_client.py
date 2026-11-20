@@ -43,6 +43,12 @@ USE_BUYBOX = (os.getenv("KEEPA_BUYBOX") or "").strip().lower() in ("1", "yes", "
 # "lowest New" offer and this module accepted it as a source). AMAZON_OWN_OFFER_ONLY=1: only Amazon's own in-stock offer counts
 # (and, with KEEPA_BUYBOX, a Buy Box held by Amazon); a product left to third-party sellers reads as out of stock. Off = the old rule.
 OWN_OFFER_ONLY = (os.getenv("AMAZON_OWN_OFFER_ONLY") or "").strip().lower() in ("1", "yes", "true")
+# 2026-11-20 (user: "want the temp out of stock ones to be out of stock first on onbuy"). When Amazon's OWN offer is
+# back-ordered (3) or dispatch-delayed (4) - the states the Temp Out of Stock column shows as YES - the row reads as
+# out of stock on OnBuy even when third-party sellers or the Buy Box still offer it: the supplier we buy from cannot
+# ship now, and overselling is the costlier mistake. AMAZON_TEMP_OOS_HOLD=0 restores the old rule (a third-party offer
+# keeps the row live). A product with NO Amazon offer at all (-1) is untouched: third-party sourcing stays as it was.
+TEMP_OOS_HOLD = (os.getenv("AMAZON_TEMP_OOS_HOLD") or "1").strip().lower() not in ("0", "no", "false", "off")
 MAX_WAIT_FOR_TOKENS = int(os.getenv("KEEPA_MAX_WAIT_SECONDS") or "600")
 # Keepa's "update" parameter: refresh the product from Amazon if its copy is
 # older than this many hours. The documented default (1) still handed the
@@ -242,6 +248,8 @@ def choose_offer(product, use_buybox=None, own_only=None):
     current = stats.get("current") or []
     avail = product.get("availabilityAmazon")
     avail = avail if isinstance(avail, int) else -1
+    if TEMP_OOS_HOLD and avail in (3, 4):
+        return -1, "", f"{AVAILABILITY_TEXT[avail]} (Amazon temp out of stock - held at 0)", "amazon-temp-oos"
 
     amazon_price = _price(current, IDX_AMAZON)
     if avail == 0 and amazon_price > 0:
