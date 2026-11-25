@@ -33,3 +33,5 @@
 # 2026-11-22 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
 949467786631  # Amazon row 5589: row = Wooden PC Soundbar Computer Speakers –PC Spea | page = cinnkeyi RGB Computer Speakers for Desktop, L
 # 2026-11-24 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+# 2026-11-25 the nightly found these listings showing ANOTHER product - zeroed and frozen automatically; release only after the page or the row is fixed
+722996923711  # Amazon row 1510: row = VonHaus Tool Kit 53pc, Small Household DIY To | page = VonHaus Household Tool Kit - 53pc Tool Kit fo
